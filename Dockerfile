@@ -2,10 +2,12 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY . .
+COPY index.html vite.config.js postcss.config.cjs tailwind.config.cjs ./
+COPY src ./src
+COPY public ./public
 
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
@@ -20,7 +22,18 @@ FROM nginx:alpine
 
 ENV PORT=8080
 ENV NGINX_ENVSUBST_FILTER=^PORT$
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+
 COPY --from=build /app/dist /usr/share/nginx/html
+
+RUN printf '%s\n' \
+    'server {' \
+    '  listen ${PORT};' \
+    '  server_name _;' \
+    '  root /usr/share/nginx/html;' \
+    '  index index.html;' \
+    '  location / {' \
+    '    try_files $uri $uri/ /index.html;' \
+    '  }' \
+    '}' > /etc/nginx/templates/default.conf.template
 
 EXPOSE 8080
