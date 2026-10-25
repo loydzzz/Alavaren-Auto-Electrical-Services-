@@ -3314,9 +3314,9 @@ function ProfileField({ label, icon, children }) {
 function ValueBox({ children }) {
   return (
     <div className="mt-2.5 rounded-2xl border border-white/80 bg-white/40 px-4 py-3.5">
-      <p className="break-words text-sm font-bold text-slate-800">
+      <div className="break-words text-sm font-bold text-slate-800">
         {children}
-      </p>
+      </div>
     </div>
   )
 }

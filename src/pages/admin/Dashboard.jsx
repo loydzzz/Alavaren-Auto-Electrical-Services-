@@ -63,6 +63,10 @@ Pencil,
   Settings2,
   Battery,
   CalendarCheck,
+  Globe,
+  UserCheck,
+  Footprints,
+  UserRound,
 } from "lucide-react"
 
 function AutoOpenOnView({ onOpen, enabled }) {
@@ -89,6 +93,10 @@ function AutoOpenOnView({ onOpen, enabled }) {
 
   return <div ref={ref} aria-hidden="true" className="h-4 w-full" />;
 }
+
+
+
+
 
 export default function AdminDashboard() {
 
@@ -381,17 +389,16 @@ supabase
           .select("*", { count: "exact", head: true })
           .eq("role", "customer"),
 
-       // Technicians + Admins
+       
+// Technicians + Admins
 supabase
   .from("users")
-  .select("id, name, email, phone, role")
+  .select("id, name, email, phone, role, is_active")   // ← added is_active
   .in("role", ["technician", "admin"])
   .order("name"),
 
-
         // Inventory activity
-       // Inventory activity
-supabase
+       supabase
   .from("inventory_transactions")
   .select(`
     *,
@@ -402,7 +409,7 @@ supabase
     )
   `)
   .order("created_at", { ascending: false })
-  .limit(5),
+  .limit(20),   // was .limit(5)
 
           // Transactions / Payment Status
         // Transactions
@@ -3446,6 +3453,7 @@ setChatMessage("")
 
 
 
+
   // =========================================================
   // ASSIGN TECHNICIAN
   // =========================================================
@@ -3461,6 +3469,16 @@ setChatMessage("")
         technicianId,
       }
     )
+
+    // ✅ Paste it here, inside the function
+  const chosen = technicians.find(
+    (s) => s.id === technicianId
+  )
+
+  if (chosen && chosen.is_active === false) {
+    alert("This account is deactivated and cannot be assigned.")
+    return
+  }
 
     // Convert empty selection to null
     const selectedTechnician =
@@ -4278,6 +4296,19 @@ const adminNotificationMessage =
 
     }
 
+    const {
+  data: attachmentFiles,
+  error: attachmentFilesError,
+} = await supabase
+  .from("service_task_attachments")
+  .select("file_path")
+  .eq("appointment_id", id)
+
+if (attachmentFilesError) {
+  alert(`Appointment was NOT deleted: ${attachmentFilesError.message}`)
+  return
+}
+
 
     // =====================================================
     // 6. DELETE APPOINTMENT
@@ -4320,6 +4351,27 @@ const adminNotificationMessage =
       return
     }
 
+    const filePaths = (attachmentFiles || [])
+  .map((f) => f.file_path)
+  .filter(Boolean)
+
+if (filePaths.length > 0) {
+  const { data: removedFiles, error: storageError } =
+    await supabase.storage
+      .from("service-task-attachments")
+      .remove(filePaths)
+
+  if (storageError || removedFiles?.length !== filePaths.length) {
+    console.warn("⚠️ Some files were not removed from Storage:", {
+      storageError,
+      removedFiles,
+      filePaths,
+    })
+  } else {
+    console.log("✅ Files removed from Storage:", filePaths.length)
+  }
+}
+
 
     // =====================================================
     // 8. SUCCESS
@@ -4332,8 +4384,8 @@ const adminNotificationMessage =
 
     alert(
       appointment.customer_id
-        ? `Cancelled ${bookingSource.toLowerCase()} deleted successfully. The customer and administrators have been notified.`
-        : `Cancelled ${bookingSource.toLowerCase()} deleted successfully. The administrators have been notified.`
+        ? `Cancelled or Rejected ${bookingSource.toLowerCase()} deleted successfully. The customer and administrators have been notified.`
+        : `Cancelled or Rejected ${bookingSource.toLowerCase()} deleted successfully. The administrators have been notified.`
     )
 
     await fetchStats()
@@ -4564,6 +4616,32 @@ async function clearAllNotifications() {
 }
 
 // =========================================================
+// LOAD RECENT INVENTORY ACTIVITY (lightweight refill)
+// =========================================================
+
+async function refreshRecentInventoryActivity() {
+  const { data, error } = await supabase
+    .from("inventory_transactions")
+    .select(`
+      *,
+      performer:performed_by (
+        id,
+        name,
+        role
+      )
+    `)
+    .order("created_at", { ascending: false })
+    .limit(20)
+
+  if (error) {
+    console.error("Refresh Inventory Activity Error:", error)
+    return
+  }
+
+  setRecentInventoryActivity(data || [])
+}
+
+// =========================================================
 // DELETE INVENTORY ACTIVITY
 // =========================================================
 
@@ -4574,20 +4652,13 @@ async function deleteInventoryActivity(id) {
 
   if (!confirmed) return
 
-  console.log("Deleting inventory activity ID:", id)
-
   const { error } = await supabase
     .from("inventory_transactions")
     .delete()
     .eq("id", id)
 
-  console.log("Delete error:", error)
-
   if (error) {
-    console.error(
-      "Delete Inventory Activity Error:",
-      error
-    )
+    console.error("Delete Inventory Activity Error:", error)
 
     toast.error(
       `Failed to delete inventory activity: ${error.message}`
@@ -4596,24 +4667,25 @@ async function deleteInventoryActivity(id) {
     return
   }
 
-  // Remove from UI only after Supabase accepts the delete
-  setRecentInventoryActivity((current) =>
-    current.filter(
-      (activity) => activity.id !== id
-    )
+  // Remove from UI only after Supabase accepts the delete.
+  // The next older activity moves up automatically.
+  const remaining = recentInventoryActivity.filter(
+    (activity) => activity.id !== id
   )
 
-  // If the deleted activity is currently open in the modal,
-  // close the modal.
-  if (
-    selectedInventoryActivity?.id === id
-  ) {
+  setRecentInventoryActivity(remaining)
+
+  // Buffer is running low, so load more in the background
+  if (remaining.length < 5) {
+    void refreshRecentInventoryActivity()
+  }
+
+  // Close the details modal if it was showing the deleted activity
+  if (selectedInventoryActivity?.id === id) {
     setSelectedInventoryActivity(null)
   }
 
-  toast.success(
-    "Inventory activity deleted successfully."
-  )
+  toast.success("Inventory activity deleted successfully.")
 }
 // =========================================================
 // MARK ALL ADMIN NOTIFICATIONS AS READ
@@ -5590,6 +5662,10 @@ useEffect(() => {
   loadAllAttachments()
 }, [recentAppointments])
 
+
+
+
+
 useEffect(() => {
   async function fetchUserRole() {
     setRoleLoading(true)
@@ -5741,7 +5817,13 @@ useEffect(() => {
   currentAuthUserId
 ])
 
+useEffect(() => {
+  const max = Math.min(recentInventoryActivity.length, 5) - 1
 
+  if (mobileInventoryActivityIndex > max) {
+    setMobileInventoryActivityIndex(Math.max(0, max))
+  }
+}, [recentInventoryActivity.length])
 
 
 
@@ -5841,7 +5923,9 @@ async function fetchAdminProfile() {
 
     return technician?.name || null
   }
-
+const activeStaff = technicians.filter(
+  (staff) => staff.is_active !== false
+)
   // =========================================================
   // TIME FORMAT
   // =========================================================
@@ -6621,7 +6705,25 @@ const handleApproveAppointment = async (appointmentId) => {
 }
 
 
+async function markConversationAsRead(conversationId) {
+  if (!conversationId) return
 
+  const { error } = await supabase
+    .from("conversations")
+    .update({ admin_last_read_at: new Date().toISOString() })
+    .eq("id", conversationId)
+
+  if (error) {
+    console.error("🚨 Failed to mark conversation as read:", error)
+    return
+  }
+
+  setAdminUnreadCounts((current) => {
+    const updated = { ...current }
+    delete updated[conversationId]
+    return updated
+  })
+}
 
 
 
@@ -7013,9 +7115,18 @@ useEffect(() => {
 
 
 
-
 const getNotificationStatus = (notification) => {
   const text = `${notification.title || ""} ${notification.message || ""}`.toLowerCase();
+  const title = (notification.title || "").toLowerCase();
+
+  // New booking / Appointment submitted: walk-in = yellow, online = blue
+  if (
+    title.includes("new booking") ||
+    title.includes("appointment submitted")
+  ) {
+    const isWalkIn = /walk[\s-]?in/.test(text);
+    return isWalkIn ? "walkin" : "online";
+  }
 
   if (text.includes("reject")) return "rejected";
   if (text.includes("cancel")) return "cancelled";
@@ -7041,6 +7152,8 @@ const getInventoryStatus = (notification) => {
 
   return null;
 };
+
+  
 const notificationStatusStyles = {
   approved: {
     icon: "bg-gradient-to-br from-green-50 to-green-100 text-green-600 ring-green-200/50",
@@ -7074,13 +7187,29 @@ const notificationStatusStyles = {
     dot: "bg-red-600",
     text: "text-red-600",
   },
-    started: {
+      started: {
+    icon: "bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 ring-blue-200/50",
+    rowUnread: "bg-blue-50/70 hover:bg-blue-50",
+    rowRead: "bg-blue-50/30 hover:bg-blue-50/60",
+    bar: "from-blue-500 to-blue-700",
+    dot: "bg-blue-600",
+    text: "text-blue-600",
+  },
+    walkin: {
     icon: "bg-gradient-to-br from-yellow-50 to-yellow-100 text-yellow-600 ring-yellow-200/50",
     rowUnread: "bg-yellow-50/70 hover:bg-yellow-50",
     rowRead: "bg-yellow-50/30 hover:bg-yellow-50/60",
     bar: "from-yellow-400 to-yellow-600",
     dot: "bg-yellow-500",
     text: "text-yellow-600",
+  },
+  online: {
+    icon: "bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 ring-blue-200/50",
+    rowUnread: "bg-blue-50/70 hover:bg-blue-50",
+    rowRead: "bg-blue-50/30 hover:bg-blue-50/60",
+    bar: "from-blue-500 to-blue-700",
+    dot: "bg-blue-600",
+    text: "text-blue-600",
   },
     updated: {
     icon: "bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 ring-blue-200/50",
@@ -7147,7 +7276,8 @@ useEffect(() => {
   const isModalOpen =
     showVehicleEligibilityModal ||
     showRejectModal ||
-    showCancelDialog;
+    showCancelDialog ||
+    !!selectedInventoryActivity;
 
   if (!isModalOpen) return;
 
@@ -7161,12 +7291,42 @@ useEffect(() => {
     document.body.style.overflow = prevBody;
     document.documentElement.style.overflow = prevHtml;
   };
-}, [showVehicleEligibilityModal, showRejectModal, showCancelDialog]);
+}, [
+  showVehicleEligibilityModal,
+  showRejectModal,
+  showCancelDialog,
+  selectedInventoryActivity,
+]);
 
+useEffect(() => {
+  const isModalOpen =
+    showModerationModal && !!selectedModerationUser;
 
+  if (!isModalOpen) return;
 
+  const prevBody = document.body.style.overflow;
+  const prevHtml = document.documentElement.style.overflow;
 
+  document.body.style.overflow = "hidden";
+  document.documentElement.style.overflow = "hidden";
 
+  return () => {
+    document.body.style.overflow = prevBody;
+    document.documentElement.style.overflow = prevHtml;
+  };
+}, [showModerationModal, selectedModerationUser]);
+
+const formatLongDate = (value) => {
+  if (!value) return "Not specified"
+
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number)
+
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+}
 
 
 
@@ -10708,6 +10868,8 @@ const notificationStatus = isInventoryUpdate
 
   )}
 
+  
+
 </div>
 
 
@@ -10725,7 +10887,7 @@ const notificationStatus = isInventoryUpdate
     BOTTOM DOT NAVIGATION PRESERVED
 =================================================== */}
 
-<div className="mb-8 w-full overflow-hidden rounded-3xl border border-gray-200/80 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.07)]">
+<div className="mt-6 mb-8 w-full overflow-hidden rounded-3xl border border-gray-200/80 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.07)]">
 
   {/* ===================================================
       PREMIUM HEADER
@@ -11837,17 +11999,11 @@ const aiCheckCompleted =
 
   </p>
 
-  <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-3">
+  <div className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50/80 p-2.5">
 
     {/* DATE */}
 
-    <p className="break-words text-xs font-bold leading-relaxed text-gray-800">
-      {appt.appointment_date || "Not specified"}
-    </p>
-
-    {/* TIME */}
-
-    <div className="mt-2 flex items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2">
 
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm">
 
@@ -11859,84 +12015,161 @@ const aiCheckCompleted =
           strokeWidth="1.8"
           className="h-3.5 w-3.5 text-gray-500"
         >
-          <circle
-            cx="12"
-            cy="12"
-            r="9"
-          />
-
           <path
             strokeLinecap="round"
-            d="M12 7v5l3 2"
+            strokeLinejoin="round"
+            d="M8 2v4m8-4v4M3.5 9.5h17M5 4.5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-12a2 2 0 0 1 2-2Z"
           />
-
         </svg>
 
       </div>
 
-      <span className="text-xs font-bold text-gray-700">
+      <div className="min-w-0">
 
-        {formatAppointmentTime(
-          appt.appointment_time
-        )}
+        <p className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400">
+          Date
+        </p>
 
-      </span>
+        <p className="truncate text-xs font-bold text-gray-800">
+          {formatLongDate(appt.appointment_date)}
+        </p>
+
+      </div>
 
     </div>
 
 
+    {/* TIME */}
+
+    <div className="flex min-w-0 items-center gap-2 border-t border-gray-200 pt-2">
+
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm">
+
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          className="h-3.5 w-3.5 text-gray-500"
+        >
+          <circle cx="12" cy="12" r="9" />
+
+          <path strokeLinecap="round" d="M12 7v5l3 2" />
+        </svg>
+
+      </div>
+
+      <div className="min-w-0">
+
+        <p className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400">
+          Time
+        </p>
+
+        <p className="truncate text-xs font-bold text-gray-800">
+          {formatAppointmentTime(appt.appointment_time)}
+        </p>
+
+      </div>
+
+    </div>
+
 
     {/* BOOKING SOURCE */}
 
-<div className="mt-3 border-t border-gray-200 pt-3">
+    <div className="flex min-w-0 items-center gap-2 border-t border-gray-200 pt-2">
 
-  <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-gray-400">
-    Booking Source
-  </p>
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm">
 
-  <div className="mt-1.5 flex items-center gap-2">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-3.5 w-3.5 text-gray-500"
+        >
+          {appt.booking_source === "walkin" ? (
+            <>
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+              <path d="m10 17 5-5-5-5" />
+              <path d="M15 12H3" />
+            </>
+          ) : (
+            <>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18" />
+              <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z" />
+            </>
+          )}
+        </svg>
 
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
-        appt.booking_source === "walkin"
-          ? "bg-amber-100 text-amber-700"
-          : "bg-blue-100 text-blue-700"
-      }`}
-    >
-      {appt.booking_source === "walkin"
-        ? "Walk-in"
-        : "Online"}
-    </span>
+      </div>
+
+      <div className="min-w-0">
+
+        <p className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400">
+          Booking Source
+        </p>
+
+        <span
+          className={`mt-0.5 inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
+            appt.booking_source === "walkin"
+              ? "bg-amber-100 text-amber-700"
+              : "bg-blue-100 text-blue-700"
+          }`}
+        >
+          {appt.booking_source === "walkin" ? "Walk-in" : "Online"}
+        </span>
+
+      </div>
+
+    </div>
+
+
+    {/* ASSISTED BY */}
+
+    {appt.assisted_by_name && (
+      <div className="flex min-w-0 items-center gap-2 border-t border-gray-200 pt-2">
+
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm">
+
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-3.5 w-3.5 text-gray-500"
+          >
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 20a8 8 0 0 1 16 0" />
+          </svg>
+
+        </div>
+
+        <div className="min-w-0">
+
+          <p className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400">
+            Assisted By
+          </p>
+
+          <p className="break-words text-xs font-bold text-gray-800">
+            {appt.assisted_by_name}
+          </p>
+
+        </div>
+
+      </div>
+    )}
 
   </div>
 
 </div>
-
-{/* ASSISTED BY */}
-
-{appt.assisted_by_name && (
-  <div className="mt-3 border-t border-gray-200 pt-3">
-
-    <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-gray-400">
-      Assisted By
-    </p>
-
-    <p className="mt-1.5 break-words text-xs font-bold text-gray-700">
-      {appt.assisted_by_name}
-    </p>
-
-  </div>
-)}
-
-
-
-
-
-
-  </div>
-
-</div>
-
 
                         {/* STATUS */}
 
@@ -12033,7 +12266,7 @@ const aiCheckCompleted =
               : "text-amber-700"
           }`}
         >
-          #{String(appt.id).padStart(5, "0")}
+          #{String(appt.id).padStart(6, "0")}
         </p>
 
       </div>
@@ -12549,19 +12782,11 @@ onClick={() => {
                             Select Technician / Admin
                           </option>
 
-                          {technicians.map(
-                            (staff) => (
-
-                              <option
-                                key={staff.id}
-                                value={staff.id}
-                              >
-                                {staff.name} —{" "}
-                                {staff.role}
-                              </option>
-
-                            )
-                          )}
+                          {activeStaff.map((staff) => (
+  <option key={staff.id} value={staff.id}>
+    {staff.name} — {staff.role}
+  </option>
+))}
 
                         </select>
 
@@ -16652,81 +16877,91 @@ rejected: {
 </div>
 
 
-                        {/* SCHEDULE */}
+                       {/* SCHEDULE */}
 
 <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
 
   <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-
     <CalendarDays className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-
     Schedule Request
-
   </p>
 
-  {/* DATE */}
+  <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
 
-  <p className="mt-2 truncate text-sm font-extrabold text-slate-900">
-    {appt.appointment_date || "Not specified"}
-  </p>
+    {/* DATE */}
+    <div className="flex min-w-0 items-center gap-2.5 px-3.5 py-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+        <CalendarDays className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+          Date
+        </p>
+        <p className="truncate text-sm font-bold text-slate-800">
+          {formatLongDate(appt.appointment_date)}
+        </p>
+      </div>
+    </div>
 
-  {/* TIME */}
+    {/* TIME */}
+    <div className="flex items-center gap-2.5 border-t border-slate-100 px-3.5 py-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+        <Clock3 className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+          Time
+        </p>
+        <p className="truncate text-sm font-bold text-slate-800">
+          {formatAppointmentTime(appt.appointment_time)}
+        </p>
+      </div>
+    </div>
 
-  <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-slate-600">
+    {/* BOOKING SOURCE */}
+    <div className="flex items-center gap-2.5 border-t border-slate-100 px-3.5 py-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+        {appt.booking_source === "walkin" ? (
+          <Footprints className="h-4 w-4" />
+        ) : (
+          <Globe className="h-4 w-4" />
+        )}
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+          Booking Source
+        </p>
+        <span
+          className={`mt-1 inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
+            appt.booking_source === "walkin"
+              ? "bg-amber-100 text-amber-700"
+              : "bg-blue-100 text-blue-700"
+          }`}
+        >
+          {appt.booking_source === "walkin" ? "Walk-in" : "Online"}
+        </span>
+      </div>
+    </div>
 
-    <Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-
-    {formatAppointmentTime(
-      appt.appointment_time
+    {/* ASSISTED BY */}
+    {appt.assisted_by_name && (
+      <div className="flex items-center gap-2.5 border-t border-slate-100 px-3.5 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+          <UserRound className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+            Assisted By
+          </p>
+          <p className="break-words text-sm font-bold text-slate-800">
+            {appt.assisted_by_name}
+          </p>
+        </div>
+      </div>
     )}
 
-  </p>
-
-  {/* BOOKING SOURCE */}
-
-  <div className="mt-3 border-t border-slate-200 pt-3">
-
-    <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-400">
-      Booking Source
-    </p>
-
-    <div className="mt-1.5 flex items-center gap-2">
-
-      <span
-        className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
-          appt.booking_source === "walkin"
-            ? "bg-amber-100 text-amber-700"
-            : "bg-blue-100 text-blue-700"
-        }`}
-      >
-        {appt.booking_source === "walkin"
-          ? "Walk-in"
-          : "Online"}
-      </span>
-
-    </div>
-
   </div>
-
-  {/* ASSISTED BY */}
-
-  {appt.assisted_by_name && (
-    <div className="mt-3 border-t border-slate-200 pt-3">
-
-      <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-400">
-        Assisted By
-      </p>
-
-      <p className="mt-1.5 break-words text-xs font-bold text-slate-700">
-        {appt.assisted_by_name}
-      </p>
-
-    </div>
-  )}
-
 </div>
-
-
 
                         {/* STATUS */}
 
@@ -16772,15 +17007,15 @@ rejected: {
       Icon: Wrench,
       label: "Service Started",
       message: "Service is currently ongoing",
-      box: "border-purple-200 bg-purple-50/70",
-      icon: "text-purple-600",
-      title: "text-purple-700",
-      msg: "text-purple-600",
-      inner: "border-purple-200/80",
-      small: "text-purple-500",
-      number: "text-purple-800",
-      iconBox: "bg-purple-50 ring-purple-200",
-      divider: "border-purple-100",
+      box: "border-green-200 bg-green-50/70",
+      icon: "text-green-600",
+      title: "text-green-700",
+      msg: "text-green-600",
+      inner: "border-green-200/80",
+      small: "text-green-500",
+      number: "text-green-800",
+      iconBox: "bg-green-50 ring-green-200",
+      divider: "border-green-100",
     },
     completed: {
       Icon: CheckCircle2,
@@ -16910,7 +17145,7 @@ rejected: {
             </p>
 
             <p className={`mt-0.5 text-base font-black tracking-[0.04em] ${theme.number}`}>
-              #{String(appt.id).padStart(5, "0")}
+              #{String(appt.id).padStart(6, "0")}
             </p>
 
           </div>
@@ -17060,7 +17295,7 @@ rejected: {
                                   )
                                 )
                               }
-                              className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-2 rounded-xl bg-purple-600 px-3.5 py-2.5 text-sm font-bold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-purple-700 hover:shadow-md sm:flex-none"
+                              className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-2 rounded-xl bg-green-600 px-3.5 py-2.5 text-sm font-bold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-green-700 hover:shadow-md sm:flex-none"
                             >
 
                               <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -17427,7 +17662,7 @@ rejected: {
           : appt.status === "confirmed"
           ? "border-blue-200 bg-blue-50 shadow-blue-100"
           : appt.status === "in_progress"
-          ? "border-purple-200 bg-purple-50 shadow-purple-100"
+          ? "border-green-200 bg-green-50 shadow-green-100"
           : appt.status === "completed"
           ? "border-green-200 bg-green-50 shadow-green-100"
           : appt.status === "cancelled"
@@ -17527,12 +17762,12 @@ rejected: {
       label: "Service In Progress",
       description:
         "Technician is currently working on the vehicle",
-      color: "bg-purple-500",
-      light: "bg-purple-50",
-      border: "border-purple-200",
-      text: "text-purple-700",
-      dot: "bg-purple-500",
-      shadow: "shadow-purple-100",
+      color: "bg-green-500",
+light: "bg-green-50",
+border: "border-green-200",
+text: "text-green-700",
+dot: "bg-green-500",
+shadow: "shadow-green-100",
     },
 
     completed: {
@@ -17777,9 +18012,9 @@ rejected: {
 
         {visualStatus === "in_progress" && (
           <>
-            <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-purple-300/20 blur-3xl"></div>
+            <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-green-300/20 blur-3xl"></div>
 
-            <div className="absolute -bottom-20 -left-10 h-40 w-40 rounded-full bg-purple-200/20 blur-3xl"></div>
+            <div className="absolute -bottom-20 -left-10 h-40 w-40 rounded-full bg-green-200/20 blur-3xl"></div>
           </>
         )}
 
@@ -17835,7 +18070,7 @@ rejected: {
               {visualStatus === "in_progress" ? (
 
                 <>
-                  <span className="absolute inset-0 rounded-2xl ring-2 ring-purple-400/30 animate-pulse"></span>
+                  <span className="absolute inset-0 rounded-2xl ring-2 ring-green-400/30 animate-pulse"></span>
 
                   <Wrench
                     className="relative h-5 w-5 animate-[spin_3s_linear_infinite]"
@@ -17885,13 +18120,13 @@ rejected: {
 
                 {visualStatus === "in_progress" && (
 
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-100 px-2.5 py-1 text-[9px] font-extrabold uppercase tracking-wider text-purple-700">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-100 px-2.5 py-1 text-[9px] font-extrabold uppercase tracking-wider text-green-700">
 
                     <span className="relative flex h-1.5 w-1.5">
 
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-purple-500 opacity-75"></span>
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75"></span>
 
-                      <span className="relative h-1.5 w-1.5 rounded-full bg-purple-600"></span>
+                      <span className="relative h-1.5 w-1.5 rounded-full bg-green-600"></span>
 
                     </span>
 
@@ -18238,7 +18473,7 @@ rejected: {
 
                     ${
                       serviceComplete
-                        ? "border-purple-500 text-purple-600"
+                        ? "border-green-500 text-green-600"
                         : visualStatus === "cancelled"
                         ? "border-orange-500 text-orange-600"
                         : visualStatus === "rejected"
@@ -18248,7 +18483,7 @@ rejected: {
 
                     ${
                       visualStatus === "in_progress"
-                        ? "ring-4 ring-purple-100"
+                        ? "ring-4 ring-green-100"
                         : ""
                     }
                   `}
@@ -18404,25 +18639,25 @@ rejected: {
 
       {visualStatus === "in_progress" && (
 
-        <div className="relative overflow-hidden border-t border-purple-200 bg-purple-50 px-4 py-3 sm:px-5">
+        <div className="relative overflow-hidden border-t border-green-200 bg-green-50 px-4 py-3 sm:px-5">
 
           <div className="relative flex items-start gap-3">
 
-            <div className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white shadow-sm">
+            <div className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-green-600 text-white shadow-sm">
 
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
 
-              <span className="absolute inset-0 rounded-full ring-2 ring-purple-400/30 animate-ping"></span>
+              <span className="absolute inset-0 rounded-full ring-2 ring-green-400/30 animate-ping"></span>
 
             </div>
 
             <div className="min-w-0">
 
-              <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-purple-600">
+              <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-green-600">
                 Live Service Update
               </p>
 
-              <p className="mt-0.5 text-xs font-semibold leading-5 text-purple-800">
+              <p className="mt-0.5 text-xs font-semibold leading-5 text-green-800">
 
                 Service is currently being worked on by{" "}
 
@@ -19374,7 +19609,7 @@ rejected: {
       appt.vehicle_detected_at
     ).toLocaleString([], {
       year: "numeric",
-      month: "short",
+      month: "long",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
@@ -19522,46 +19757,107 @@ rejected: {
 
                           <div className="px-4 py-5 sm:px-6">
 
-                            <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4">
+                            {/* CUSTOMER INFORMATION */}
 
-                              <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-                                Customer
-                              </p>
+{(() => {
+  const normalizedBookingSource = String(
+    selectedCancelAppointment.booking_source || ""
+  )
+    .toLowerCase()
+    .replace(/[-_]/g, "")
 
-                              <p className="mt-1 break-words font-extrabold text-slate-900">
-                                {selectedCancelAppointment.customer_name ||
-                                  "Unknown Customer"}
-                              </p>
+  const isWalkIn =
+    normalizedBookingSource === "walkin" ||
+    !selectedCancelAppointment.customer_id
 
-                              <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-                                Service
-                              </p>
+  const theme = isWalkIn
+    ? {
+        headerBg: "bg-amber-50/80",
+        iconBox: "bg-amber-100 text-amber-600",
+        title: "text-amber-700",
+        border: "border-amber-200",
+      }
+    : {
+        headerBg: "bg-blue-50/70",
+        iconBox: "bg-blue-100 text-blue-600",
+        title: "text-blue-700",
+        border: "border-slate-200",
+      }
 
-                              <p className="mt-1 break-words font-bold text-slate-800">
-                                {selectedCancelAppointment.service_type ||
-                                  "Not specified"}
-                              </p>
+  const Row = ({ icon: Icon, label, children }) => (
+  <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-b-0">
 
-                              <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-                                Schedule
-                              </p>
+    <div className="flex shrink-0 items-center gap-2">
+      <Icon className="h-4 w-4 text-slate-500" strokeWidth={2} />
+      <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-slate-600">
+        {label}
+      </p>
+    </div>
 
-                              <p className="mt-1 text-sm font-semibold text-slate-700">
-                                {selectedCancelAppointment.appointment_date ||
-                                  "Not specified"}
-                              </p>
+    <div className="min-w-0 break-words text-right text-sm font-semibold leading-snug text-slate-900">
+      {children}
+    </div>
 
-                              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-500">
+  </div>
+)
+  
 
-                                <Clock3 className="h-3.5 w-3.5 shrink-0" />
+  return (
+    <div className={`mb-5 overflow-hidden rounded-2xl border bg-white shadow-sm ${theme.border}`}>
 
-                                {formatAppointmentTime(
-                                  selectedCancelAppointment.appointment_time
-                                )}
+      {/* CARD HEADER */}
 
-                              </p>
+      <div className={`flex items-center gap-2.5 border-b border-slate-100 px-4 py-3 ${theme.headerBg}`}>
 
-                            </div>
+        <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${theme.iconBox}`}>
+          <User className="h-4 w-4" strokeWidth={2.2} />
+        </div>
+
+        <p className={`text-xs font-extrabold uppercase tracking-[0.1em] ${theme.title}`}>
+          Customer Information
+        </p>
+
+      </div>
+
+      {/* ROWS */}
+
+      <Row icon={Hash} label="Appointment No.">
+        <span className="font-bold tabular-nums tracking-wide text-slate-950">
+  APPT-{String(selectedCancelAppointment.id).padStart(6, "0")}
+</span>
+      </Row>
+
+      <Row icon={User} label="Customer">
+        {selectedCancelAppointment.customer_name || "Unknown Customer"}
+      </Row>
+
+      <Row icon={Wrench} label="Service">
+        {selectedCancelAppointment.service_type || "Not specified"}
+      </Row>
+
+     <Row icon={CalendarDays} label="Date Request">
+  {formatLongDate(selectedCancelAppointment.appointment_date)}
+</Row>
+
+      <Row icon={Clock3} label="Time Request">
+        {formatAppointmentTime(selectedCancelAppointment.appointment_time)}
+      </Row>
+
+      <Row icon={Globe} label="Booking Source">
+        {isWalkIn ? "Walk-in" : "Online"}
+      </Row>
+
+      {/* ASSISTED BY: walk-in only, and only when a name exists */}
+
+      {isWalkIn && selectedCancelAppointment.assisted_by_name && (
+        <Row icon={UserCheck} label="Assisted By">
+          {selectedCancelAppointment.assisted_by_name}
+        </Row>
+      )}
+
+    </div>
+  )
+})()}
 
 
                             {/* REASON */}
@@ -19810,47 +20106,105 @@ rejected: {
 
                           <div className="px-4 py-5 sm:px-6">
 
-                            <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4">
+                            {/* CUSTOMER INFORMATION */}
 
-                              <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-                                Customer
-                              </p>
+{(() => {
+  const normalizedBookingSource = String(
+    selectedAppointment.booking_source || ""
+  )
+    .toLowerCase()
+    .replace(/[-_]/g, "")
 
-                              <p className="mt-1 break-words font-extrabold text-slate-900">
-                                {selectedAppointment.customer_name ||
-                                  "Unknown Customer"}
-                              </p>
+  const isWalkIn =
+  normalizedBookingSource === "walkin" ||
+  !selectedAppointment.customer_id
 
-                              <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-                                Service
-                              </p>
+const theme = isWalkIn
+  ? {
+      headerBg: "bg-amber-50/80",
+      iconBox: "bg-amber-100 text-amber-600",
+      title: "text-amber-700",
+      border: "border-amber-200",
+    }
+  : {
+      headerBg: "bg-blue-50/70",
+      iconBox: "bg-blue-100 text-blue-600",
+      title: "text-blue-700",
+      border: "border-slate-200",
+    }
+const Row = ({ icon: Icon, label, children }) => (
+  <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-b-0">
 
-                              <p className="mt-1 break-words font-bold text-slate-800">
-                                {selectedAppointment.service_type ||
-                                  "Not specified"}
-                              </p>
+    <div className="flex shrink-0 items-center gap-2">
+      <Icon className="h-4 w-4 text-slate-500" strokeWidth={2} />
+      <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-slate-600">
+        {label}
+      </p>
+    </div>
 
-                              <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
-                                Schedule
-                              </p>
+    <div className="min-w-0 break-words text-right text-sm font-semibold leading-snug text-slate-900">
+      {children}
+    </div>
 
-                              <p className="mt-1 text-sm font-semibold text-slate-700">
-                                {selectedAppointment.appointment_date ||
-                                  "Not specified"}
-                              </p>
+  </div>
+)
+ return (
+  <div className={`mb-5 overflow-hidden rounded-2xl border bg-white shadow-sm ${theme.border}`}>
 
-                              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-500">
+    {/* CARD HEADER */}
 
-                                <Clock3 className="h-3.5 w-3.5 shrink-0" />
+    <div className={`flex items-center gap-2.5 border-b border-slate-100 px-4 py-3 ${theme.headerBg}`}>
 
-                                {formatAppointmentTime(
-                                  selectedAppointment.appointment_time
-                                )}
+      <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${theme.iconBox}`}>
+        <User className="h-4 w-4" strokeWidth={2.2} />
+      </div>
 
-                              </p>
+      <p className={`text-xs font-extrabold uppercase tracking-[0.1em] ${theme.title}`}>
+        Customer Information
+      </p>
 
-                            </div>
+    </div>
 
+    {/* ROWS stay exactly the same */}
+
+      {/* ROWS */}
+
+     <Row icon={Hash} label="Appointment No.">
+  <span className="font-bold tabular-nums tracking-wide text-slate-950">
+    APPT-{String(selectedAppointment.id).padStart(6, "0")}
+  </span>
+</Row>
+      <Row icon={User} label="Customer">
+        {selectedAppointment.customer_name || "Unknown Customer"}
+      </Row>
+
+      <Row icon={Wrench} label="Service">
+        {selectedAppointment.service_type || "Not specified"}
+      </Row>
+
+      <Row icon={CalendarDays} label="Date Request">
+  {formatLongDate(selectedAppointment.appointment_date)}
+</Row>
+
+      <Row icon={Clock3} label="Time Request">
+        {formatAppointmentTime(selectedAppointment.appointment_time)}
+      </Row>
+
+      <Row icon={Globe} label="Booking Source">
+        {isWalkIn ? "Walk-in" : "Online"}
+      </Row>
+
+      {/* ASSISTED BY: walk-in only, and only when a name exists */}
+
+      {isWalkIn && selectedAppointment.assisted_by_name && (
+        <Row icon={UserCheck} label="Assisted By">
+          {selectedAppointment.assisted_by_name}
+        </Row>
+      )}
+
+    </div>
+  )
+})()}
 
                             {/* REJECTION REASON */}
 
@@ -21594,9 +21948,9 @@ INVENTORY ITEMS
 
 {selectedInventoryActivity && (
 
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm sm:p-4">
+  <div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">
 
-    <div className="flex max-h-[96vh] w-full max-w-4xl flex-col overflow-hidden rounded-[1.5rem] border border-white/20 bg-white shadow-[0_30px_100px_-25px_rgba(15,23,42,0.55)] sm:max-h-[92vh] sm:rounded-[2rem]">
+  <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-white/20 bg-white shadow-[0_30px_100px_-25px_rgba(15,23,42,0.55)] sm:max-w-4xl sm:rounded-[2rem]">
 
       {/* ===================================================
           HEADER
@@ -23450,36 +23804,34 @@ INVENTORY ITEMS
   selectedModerationUser && (
 
     <div className="
-      fixed
-      inset-0
-      z-50
-      flex
-      items-end
-      justify-center
-      bg-slate-950/70
-      p-0
-      backdrop-blur-sm
-      sm:items-center
-      sm:p-4
-    ">
+  fixed
+  inset-0
+  z-[9999]
+  flex
+  items-end
+  justify-center
+  overscroll-contain
+  bg-slate-950/70
+  p-0
+  sm:items-center
+  sm:p-4
+">
 
-      <div className="
-        relative
-        flex
-        max-h-[100dvh]
-        w-full
-        flex-col
-        overflow-hidden
-        rounded-t-[1.75rem]
-        border
-        border-white/20
-        bg-white
-        shadow-[0_30px_100px_-25px_rgba(15,23,42,0.6)]
-        sm:max-h-[92vh]
-        sm:max-w-lg
-        sm:rounded-[1.75rem]
-      ">
-
+  <div className="
+    relative
+    flex
+    max-h-[95dvh]
+    w-full
+    flex-col
+    overflow-hidden
+    rounded-t-[1.75rem]
+    border
+    border-white/20
+    bg-white
+    shadow-[0_30px_100px_-25px_rgba(15,23,42,0.6)]
+    sm:max-w-lg
+    sm:rounded-[1.75rem]
+  ">
 
         {/* =====================================================
             TOP ACCENT

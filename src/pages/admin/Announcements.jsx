@@ -1046,20 +1046,32 @@ export default function Announcements() {
   // FORMAT DATE
   // =========================================================
 
-  const formatDate = (date) => {
+    const formatDate = (date) => {
     if (!date) {
       return 'Not scheduled'
     }
 
-    return new Date(
-      date
-    ).toLocaleString(
-      'en-PH',
-      {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      }
-    )
+    const parsed = new Date(date)
+
+    if (Number.isNaN(parsed.getTime())) {
+      return 'Not scheduled'
+    }
+
+    const datePart =
+      parsed.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+
+    const timePart =
+      parsed.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+
+    return `${datePart} at ${timePart}`
   }
 
   // =========================================================

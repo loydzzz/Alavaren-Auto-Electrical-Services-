@@ -764,6 +764,23 @@ if (notificationError) {
         .includes(search.toLowerCase())
   )
 
+  useEffect(() => {
+  const isModalOpen = showUseDialog || showRestockDialog
+
+  if (!isModalOpen) return
+
+  const prevBody = document.body.style.overflow
+  const prevHtml = document.documentElement.style.overflow
+
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+
+  return () => {
+    document.body.style.overflow = prevBody
+    document.documentElement.style.overflow = prevHtml
+  }
+}, [showUseDialog, showRestockDialog])
+
   return (
     <div className="min-h-screen bg-[#f5f5f5] text-gray-900">
       <Toaster
@@ -1219,8 +1236,7 @@ if (notificationError) {
           {/* ================= USE STOCK DIALOG ================= */}
 
           {showUseDialog && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-3 sm:p-4">
-
+<div className="fixed inset-0 z-[9999] flex items-center justify-center overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4">
               <div className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6 w-full max-w-md max-h-[95vh] overflow-y-auto">
 
                 <div className="flex items-start gap-3 mb-5">
@@ -1339,7 +1355,7 @@ if (notificationError) {
           {/* ================= RESTOCK DIALOG ================= */}
 
           {showRestockDialog && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-3 sm:p-4">
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4">
 
               <div className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6 w-full max-w-md max-h-[95vh] overflow-y-auto">
 

@@ -19,6 +19,18 @@ import {
   FaQuestionCircle,
 } from 'react-icons/fa'
 
+import {
+  UserRound,
+  CarFront,
+  Wrench,
+  Settings2,
+  CalendarDays,
+  Fuel,
+  BatteryCharging,
+  Hash,
+  MapPin,
+} from 'lucide-react'
+
 /* =========================================================
    FORMAT HELPERS
 ========================================================= */
@@ -33,9 +45,13 @@ const formatMoney = (amount) => {
 const formatDate = (date) => {
   if (!date) return 'N/A'
 
-  return new Date(date).toLocaleDateString('en-PH', {
+  const parsed = new Date(date)
+
+  if (Number.isNaN(parsed.getTime())) return 'N/A'
+
+  return parsed.toLocaleDateString('en-US', {
     year: 'numeric',
-    month: 'short',
+    month: 'long',
     day: 'numeric',
   })
 }
@@ -47,20 +63,44 @@ const formatCreatedDateTime = (dateTime) => {
 
   const date = new Date(dateTime)
 
+  if (Number.isNaN(date.getTime())) {
+    return { date: 'N/A', time: 'N/A' }
+  }
+
   return {
-    date: date.toLocaleDateString('en-PH', {
+    date: date.toLocaleDateString('en-US', {
       year: 'numeric',
-      month: 'short',
+      month: 'long',
       day: 'numeric',
     }),
 
-    time: date.toLocaleTimeString('en-PH', {
+    time: date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
-      second: '2-digit',
       hour12: true,
     }),
   }
+}
+
+const formatTime12 = (value) => {
+  if (!value) return 'N/A'
+
+  const parsed = new Date(`2000-01-01T${value}`)
+
+  if (Number.isNaN(parsed.getTime())) return String(value)
+
+  return parsed.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+const joinDateTime = (date, time) => {
+  if (!date || date === 'N/A') return 'N/A'
+  if (!time || time === 'N/A') return date
+
+  return `${date} at ${time}`
 }
 
 /* =========================================================
@@ -108,10 +148,40 @@ const RECEIPT_STYLES = `
     gap: 12px 30px;
   }
 
-  .info { font-size: 14px; line-height: 1.5; }
-  .label { color: #6b7280; margin-right: 5px; }
-  .value { font-weight: bold; }
+  
 
+ .info {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.label {
+  color: #6b7280;
+  margin-right: 5px;
+}
+
+.value {
+  font-weight: bold;
+}
+
+.payment-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.payment-details .info {
+  display: block;
+}
+
+.payment-details .label {
+  margin-right: 5px;
+}
+
+.payment-details .value {
+  display: inline;
+  text-align: left;
+}
   table { width: 100%; border-collapse: collapse; }
 
   th {
@@ -208,9 +278,9 @@ const buildReceiptHTML = (transaction) => {
     appointment.appointment_date || transaction.appointment_date
   )
 
-  const appointmentTime =
-    appointment.appointment_time || transaction.appointment_time || 'N/A'
-
+    const appointmentTime = formatTime12(
+    appointment.appointment_time || transaction.appointment_time
+  )
   const completed = appointment.completed_at
     ? formatCreatedDateTime(appointment.completed_at)
     : { date: 'N/A', time: 'N/A' }
@@ -368,15 +438,17 @@ const buildReceiptHTML = (transaction) => {
               <span class="value">${appointment.technician_role || 'N/A'}</span>
             </div>
 
-            <div class="info">
-              <span class="label">Payment:</span>
-              <span class="value">${transaction.payment_method || 'Cash'}</span>
-            </div>
+            <div class="payment-details">
+  <div class="info">
+    <span class="label">Payment:</span>
+    <span class="value">${transaction.payment_method || 'Cash'}</span>
+  </div>
 
-            <div class="info">
-              <span class="label">Payment Status:</span>
-              <span class="value">${transaction.payment_status || 'Paid'}</span>
-            </div>
+  <div class="info">
+    <span class="label">Payment Status:</span>
+    <span class="value">${transaction.payment_status || 'Paid'}</span>
+  </div>
+</div>
           </div>
         </div>
 
@@ -447,17 +519,16 @@ const buildReceiptHTML = (transaction) => {
           <div class="info-grid">
             <div class="info">
               <span class="label">Appointment:</span>
-              <span class="value">${appointmentDate} ${appointmentTime}</span>
-            </div>
+<span class="value">${joinDateTime(appointmentDate, appointmentTime)}</span>            </div>
 
             <div class="info">
               <span class="label">Completed:</span>
-              <span class="value">${completed.date} ${completed.time}</span>
+              <span class="value">${joinDateTime(completed.date, completed.time)}</span>
             </div>
 
             <div class="info">
               <span class="label">Transaction Created:</span>
-              <span class="value">${created.date} ${created.time}</span>
+              <span class="value">${joinDateTime(created.date, created.time)}</span>
             </div>
           </div>
         </div>
@@ -1227,128 +1298,215 @@ export default function Transactions() {
                     </div>
                   </div>
 
-                  {/* MAIN DETAILS */}
-                  <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-4">
-                    {/* CUSTOMER */}
-                    <div className="rounded-xl border border-transparent p-2 transition-colors hover:border-blue-100 hover:bg-blue-50/40">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                          <FaUser />
-                        </div>
+                  
+{/* =====================================================
+    MAIN DETAILS
+===================================================== */}
 
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400">
-                            Customer
-                          </p>
+<div className="grid grid-cols-1 gap-4 p-4 sm:p-5 lg:grid-cols-2">
 
-                          <p className="mt-1 truncate text-sm font-semibold text-slate-800">
-                            {transaction.customer_name || 'N/A'}
-                          </p>
+  {/* CUSTOMER */}
+  <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white transition-shadow hover:shadow-md">
 
-                          <p className="mt-1 break-words text-xs text-slate-500">
-                            Address:
-                            <span className="ml-1 font-semibold text-slate-700">
-                              {appointment.customer_address ||
-                                transaction.customer_address ||
-                                'N/A'}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+    <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+        <UserRound size={19} />
+      </div>
 
-                    {/* VEHICLE */}
-                    <div className="rounded-xl border border-transparent p-2 transition-colors hover:border-purple-100 hover:bg-purple-50/40">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
-                          <FaCar />
-                        </div>
+      <div>
+        <h3 className="text-sm font-bold text-slate-800">
+          Customer Information
+        </h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Customer details and address
+        </p>
+      </div>
+    </div>
 
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400">
-                            Vehicle
-                          </p>
+    <div className="space-y-4 p-4">
 
-                          <p className="mt-1 truncate text-sm font-semibold text-slate-800">
-                            {transaction.vehicle_model || 'N/A'}
-                          </p>
+      <div>
+        <p className="text-xs font-medium text-slate-500">
+          Customer Name
+        </p>
+        <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+          {transaction.customer_name || 'N/A'}
+        </p>
+      </div>
 
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            Plate:
-                            <span className="ml-1 font-semibold text-slate-700">
-                              {transaction.plate_number || 'N/A'}
-                            </span>
-                          </p>
+      <div className="border-t border-slate-100 pt-3">
+        <div className="mb-1 flex items-center gap-1.5 text-slate-500">
+          <MapPin size={14} />
+          <p className="text-xs font-medium">
+            Address
+          </p>
+        </div>
 
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            Fuel Type:
-                            <span className="ml-1 font-semibold text-slate-700">
-                              {appointment.fuel_type || 'N/A'}
-                            </span>
-                          </p>
+        <p className="break-words text-sm leading-relaxed text-slate-700">
+          {appointment.customer_address ||
+            transaction.customer_address ||
+            'N/A'}
+        </p>
+      </div>
 
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            Battery:
-                            <span className="ml-1 font-semibold text-slate-700">
-                              {appointment.battery_voltage || 'N/A'}
-                            </span>
-                          </p>
+    </div>
+  </div>
 
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            Transmission:
-                            <span className="ml-1 font-semibold text-slate-700">
-                              {appointment.transmission_type || 'N/A'}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    </div>
 
-                    {/* SERVICE */}
-                    <div className="rounded-xl border border-transparent p-2 transition-colors hover:border-orange-100 hover:bg-orange-50/40">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-600">
-                          <FaWrench />
-                        </div>
+ 
+{/* VEHICLE */}
+<div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white transition-shadow hover:shadow-md">
 
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400">
-                            Service
-                          </p>
+  {/* HEADER */}
+  <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5">
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
+      <CarFront size={20} />
+    </div>
 
-                          <p className="mt-1 truncate text-sm font-semibold text-slate-800">
-                            {transaction.service_type || 'N/A'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+    <div>
+      <h3 className="text-sm font-bold text-slate-800">
+        Vehicle Information
+      </h3>
+      <p className="mt-0.5 text-xs text-slate-500">
+        Vehicle specifications
+      </p>
+    </div>
+  </div>
 
-                    {/* TECHNICIAN */}
-                    <div className="rounded-xl border border-transparent p-2 transition-colors hover:border-indigo-100 hover:bg-indigo-50/40">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                          <FaWrench />
-                        </div>
+  {/* VEHICLE DETAILS */}
+  <div className="divide-y divide-slate-100 px-4">
 
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400">
-                            Technician
-                          </p>
+    {/* VEHICLE MODEL */}
+    <div className="flex items-start justify-between gap-4 py-3">
+      <span className="shrink-0 text-xs font-medium text-slate-500">
+        Vehicle Model
+      </span>
 
-                          <p className="mt-1 truncate text-sm font-semibold text-slate-800">
-                            {transaction.technician_name || 'N/A'}
-                          </p>
+      <span className="min-w-0 break-words text-right text-sm font-semibold text-slate-800">
+        {transaction.vehicle_model || 'N/A'}
+      </span>
+    </div>
 
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            Role:
-                            <span className="ml-1 font-semibold text-indigo-600">
-                              {appointment.technician_role || 'N/A'}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+    {/* PLATE NUMBER */}
+    <div className="flex items-start justify-between gap-4 py-3">
+      <span className="shrink-0 text-xs font-medium text-slate-500">
+        Plate Number
+      </span>
+
+      <span className="min-w-0 break-words text-right text-sm font-semibold text-slate-800">
+        {transaction.plate_number || 'N/A'}
+      </span>
+    </div>
+
+    {/* FUEL TYPE */}
+    <div className="flex items-start justify-between gap-4 py-3">
+      <span className="shrink-0 text-xs font-medium text-slate-500">
+        Fuel Type
+      </span>
+
+      <span className="min-w-0 break-words text-right text-sm font-semibold capitalize text-slate-800">
+        {appointment.fuel_type || 'N/A'}
+      </span>
+    </div>
+
+    {/* BATTERY VOLTAGE */}
+    <div className="flex items-start justify-between gap-4 py-3">
+      <span className="shrink-0 text-xs font-medium text-slate-500">
+        Battery Voltage
+      </span>
+
+      <span className="min-w-0 break-words text-right text-sm font-semibold text-slate-800">
+        {appointment.battery_voltage || 'N/A'}
+      </span>
+    </div>
+
+    {/* TRANSMISSION */}
+    <div className="flex items-start justify-between gap-4 py-3">
+      <span className="shrink-0 text-xs font-medium text-slate-500">
+        Transmission
+      </span>
+
+      <span className="min-w-0 break-words text-right text-sm font-semibold capitalize text-slate-800">
+        {appointment.transmission_type || 'N/A'}
+      </span>
+    </div>
+
+  </div>
+</div>
+
+
+
+  {/* SERVICE */}
+  <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white transition-shadow hover:shadow-md">
+
+    <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+        <Wrench size={19} />
+      </div>
+
+      <div>
+        <h3 className="text-sm font-bold text-slate-800">
+          Service Information
+        </h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Requested repair service
+        </p>
+      </div>
+    </div>
+
+    <div className="p-4">
+      <p className="text-xs font-medium text-slate-500">
+        Service Type
+      </p>
+      <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+        {transaction.service_type || 'N/A'}
+      </p>
+    </div>
+  </div>
+
+
+  {/* TECHNICIAN */}
+  <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white transition-shadow hover:shadow-md">
+
+    <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+        <Wrench size={19} />
+      </div>
+
+      <div>
+        <h3 className="text-sm font-bold text-slate-800">
+          Technician Information
+        </h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Assigned service technician
+        </p>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-2 gap-4 p-4">
+
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-slate-500">
+          Technician Name
+        </p>
+        <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+          {transaction.technician_name || 'N/A'}
+        </p>
+      </div>
+
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-slate-500">
+          Role
+        </p>
+        <p className="mt-1 break-words text-sm font-semibold capitalize text-indigo-600">
+          {appointment.technician_role || 'N/A'}
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+</div>
 
                   {/* FINANCIAL DETAILS */}
                   <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-6 sm:py-6 lg:px-7">
@@ -1545,11 +1703,13 @@ export default function Transactions() {
                                   transaction.appointment_date
                               )}
 
-                              <span className="ml-1">
-                                {appointment.appointment_time ||
-                                  transaction.appointment_time ||
-                                  'N/A'}
-                              </span>
+                               <span className="ml-1">
+  at{' '}
+  {formatTime12(
+    appointment.appointment_time ||
+      transaction.appointment_time
+  )}
+</span>
                             </p>
                           </div>
                         </div>
@@ -1575,12 +1735,12 @@ export default function Transactions() {
 
                               {appointment.completed_at && (
                                 <span className="ml-1">
-                                  {
-                                    formatCreatedDateTime(
-                                      appointment.completed_at
-                                    ).time
-                                  }
-                                </span>
+  at{' '}
+  {formatTime12(
+    appointment.appointment_time ||
+      transaction.appointment_time
+  )}
+</span>
                               )}
                             </p>
                           </div>
@@ -1603,8 +1763,8 @@ export default function Transactions() {
                               {formatCreatedDateTime(transaction.created_at).date}
 
                               <span className="ml-1">
-                                {formatCreatedDateTime(transaction.created_at).time}
-                              </span>
+  at {formatCreatedDateTime(transaction.created_at).time}
+</span>
                             </p>
                           </div>
                         </div>

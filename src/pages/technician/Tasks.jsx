@@ -40,6 +40,10 @@ import {
   Fuel,
   Battery,
   Settings2,
+  User,
+  Hash,
+Globe,
+UserCheck,
 } from 'lucide-react'
 import { FaClipboardList } from 'react-icons/fa'
 
@@ -1677,13 +1681,7 @@ useEffect(() => {
         'Your vehicle service has been completed.'
       )
 
-      const completedAt = new Date().toLocaleString([], {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      })
+      const completedAt = formatDateTime(new Date())
 
       // CUSTOMER NOTIFICATION
       await createCustomerNotification({
@@ -1842,17 +1840,7 @@ useEffect(() => {
               ? `(Plate No. ${appointment.plate_number}) `
               : ''
           }` +
-          `has started at ${
-            updateData.in_progress_at
-              ? new Date(updateData.in_progress_at).toLocaleString([], {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })
-              : 'the current time'
-          }. ` +
+          `has started at ${formatDateTime(updateData.in_progress_at)}. ` +
           `Our technician is currently working on your vehicle.`,
 
         type: 'service_started',
@@ -1886,17 +1874,7 @@ useEffect(() => {
           `The appointment for ` +
           `${appointment.customer_name || 'Customer'} ` +
           `(${appointment.service_type || 'Service'}) ` +
-          `has started at ${
-            updateData.in_progress_at
-              ? new Date(updateData.in_progress_at).toLocaleString([], {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })
-              : 'the current time'
-          }. ` +
+          `has started at ${formatDateTime(updateData.in_progress_at)}. ` +
           `The technician is currently working on the ` +
           `${appointment.vehicle_model || 'vehicle'}.` +
           (
@@ -1912,15 +1890,7 @@ useEffect(() => {
     if (status === 'cancelled') {
       const cleanReason = reason?.trim()
 
-      const cancelledAt = new Date(
-        updateData.cancelled_at
-      ).toLocaleString([], {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      })
+      const cancelledAt = formatDateTime(updateData.cancelled_at)
 
       // CUSTOMER NOTIFICATION
       await createCustomerNotification({
@@ -2870,45 +2840,69 @@ useEffect(() => {
   // =========================================================
 
   function formatTime(time) {
-    if (!time) return 'Not specified'
+  if (!time) return 'Not specified'
 
-    return new Date(
-      `1970-01-01T${time}`
-    ).toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })
+  return new Date(`1970-01-01T${time}`).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+function formatDateTime(value) {
+  if (!value) return 'Not available'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Not available'
+
+  const datePart = date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+
+  const timePart = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  return `${datePart} at ${timePart}`
+}
+
+function formatDate(value) {
+  if (!value) return 'Not available'
+
+  return new Date(value).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes)
+
+  if (!size || size <= 0) return '0 KB'
+
+  if (size < 1024) return `${size} B`
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`
   }
 
-  function formatDateTime(value) {
-    if (!value) return 'Not available'
+  return `${(size / 1024 / 1024).toFixed(2)} MB`
+}
 
-    return new Date(value).toLocaleString(
-      undefined,
-      {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      }
-    )
-  }
+// Appointment date + time columns -> "October 23, 2026 at 9:00 AM"
+function formatSchedule(date, time) {
+  if (!date) return 'Not specified'
+  if (!time) return formatLongDate(date)
 
-  function formatDate(value) {
-    if (!value) return 'Not available'
+  return `${formatLongDate(date)} at ${formatTime(time)}`
+}
 
-    return new Date(value).toLocaleDateString(
-      undefined,
-      {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      }
-    )
-  }
+
 
   function getStatusStyle(status) {
     if (status === 'confirmed') {
@@ -3167,6 +3161,39 @@ const isUserOnline = lastSeen => {
     }
   }
 
+
+  useEffect(() => {
+  const isAnyModalOpen =
+    (showAddItemDialog && !!selectedTask) ||
+    (showRejectModal && !!selectedAppointment);
+
+  if (!isAnyModalOpen) return;
+
+  const prevBody = document.body.style.overflow;
+  const prevHtml = document.documentElement.style.overflow;
+
+  document.body.style.overflow = "hidden";
+  document.documentElement.style.overflow = "hidden";
+
+  return () => {
+    document.body.style.overflow = prevBody;
+    document.documentElement.style.overflow = prevHtml;
+  };
+}, [showAddItemDialog, selectedTask, showRejectModal, selectedAppointment]);
+
+
+
+const formatLongDate = (value) => {
+  if (!value) return "Not specified"
+
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number)
+
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+}
 
   // =========================================================
   // RENDER
@@ -3909,19 +3936,18 @@ const isUserOnline = lastSeen => {
 
                             </div>
 
-                            <div className="min-w-0">
+                           <div className="min-w-0">
 
-                              <p className="flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-[0.1em] text-slate-400">
-                                <CalendarDays className="h-3 w-3" />
-                                Date
-                              </p>
+  <p className="flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-[0.1em] text-slate-400">
+    <CalendarDays className="h-3 w-3" />
+    Date
+  </p>
 
-                              <p className="mt-1 break-words text-sm font-extrabold text-slate-900">
-                                {task.appointment_date || 'Not specified'}
-                              </p>
+  <p className="mt-1 break-words text-sm font-extrabold text-slate-900">
+    {formatLongDate(task.appointment_date)}
+  </p>
 
-                            </div>
-
+</div>
                             <div className="min-w-0">
 
                               <p className="flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-[0.1em] text-slate-400">
@@ -3934,6 +3960,8 @@ const isUserOnline = lastSeen => {
                               </p>
 
                             </div>
+
+                            
 
                             <div className="min-w-0">
 
@@ -4729,39 +4757,15 @@ const isUserOnline = lastSeen => {
                                           </p>
 
                                           {attachment.created_at && (
-                                            <p className="mt-1 text-xs text-slate-400">
-                                              Created:{' '}
-                                              {new Date(
-                                                attachment.created_at
-                                              ).toLocaleDateString(
-                                                undefined,
-                                                {
-                                                  year: 'numeric',
-                                                  month: 'short',
-                                                  day: 'numeric',
-                                                }
-                                              )}
-                                              {' • '}
-                                              {new Date(
-                                                attachment.created_at
-                                              ).toLocaleTimeString([], {
-                                                hour: 'numeric',
-                                                minute: '2-digit',
-                                                hour12: true,
-                                              })}
-                                            </p>
-                                          )}
-
+  <p className="mt-1 text-xs text-slate-400">
+    Created: {formatDateTime(attachment.created_at)}
+  </p>
+)}
                                           {attachment.file_size && (
-                                            <p className="mt-1 text-xs text-slate-400">
-                                              {(
-                                                attachment.file_size /
-                                                1024 /
-                                                1024
-                                              ).toFixed(2)}{' '}
-                                              MB
-                                            </p>
-                                          )}
+  <p className="mt-1 text-xs text-slate-400">
+    {formatFileSize(attachment.file_size)}
+  </p>
+)}
 
                                         </div>
 
@@ -5004,23 +5008,10 @@ const isUserOnline = lastSeen => {
                         {/* DETECTION TIME */}
 
                         {task.vehicle_detected_at && (
-                          <p className="mt-2 break-words text-[10px] font-medium leading-4 text-slate-400">
-
-                            AI check completed{' '}
-
-                            {new Date(
-                              task.vehicle_detected_at
-                            ).toLocaleString([], {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                              hour12: true,
-                            })}
-
-                          </p>
-                        )}
+  <p className="mt-2 break-words text-[10px] font-medium leading-4 text-slate-400">
+    AI check completed {formatDateTime(task.vehicle_detected_at)}
+  </p>
+)}
 
                       </div>
 
@@ -5742,11 +5733,16 @@ const isUserOnline = lastSeen => {
           ADD INVENTORY MODAL
       ===================================================== */}
 
-      {showAddItemDialog && selectedTask && (
+      
 
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/30 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+       {showAddItemDialog && selectedTask && (
 
-          <div className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-2xl">
+<div className="fixed inset-0 z-[9999] flex items-center justify-center overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4">
+    {/* OUTER: owns the rounded corners and clips everything */}
+    <div className="w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-2xl">
+
+      {/* INNER: does the scrolling, with the rounded scrollbar */}
+      <div className="modal-scroll max-h-[92vh] overflow-y-auto overscroll-contain">
 
             <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
 
@@ -6002,312 +5998,253 @@ const isUserOnline = lastSeen => {
 
               </div>
 
-            </div>
+                       </div>   {/* closes the p-5 sm:p-6 body */}
 
-          </div>
+          </div>     {/* closes modal-scroll (inner) */}
 
-        </div>
+        </div>       {/* closes outer rounded panel */}
 
-      )}
+      </div>
+
+    )}
 
 
       {/* =====================================================
           CANCEL SERVICE MODAL
       ===================================================== */}
 
-      {showRejectModal &&
-        selectedAppointment && (
+      {showRejectModal && selectedAppointment && (
+  <div className="fixed inset-0 z-[9999] flex items-center justify-center overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4">
 
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/30 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <div className="w-full max-w-md overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_25px_70px_rgba(15,23,42,0.28)]">
 
-            <div className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-2xl">
+      <div className="modal-scroll max-h-[92vh] overflow-y-auto overscroll-contain">
 
-              {/* HEADER */}
+        {/* HEADER */}
+        <div className="border-b border-slate-200 bg-white px-4 py-5 sm:px-6">
+          <div className="flex items-start gap-3">
 
-              <div className="border-b border-slate-200 px-5 py-5 sm:px-6">
-
-                <div className="flex items-start gap-3">
-
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-200 bg-gradient-to-br from-red-50 to-rose-100 text-red-600 shadow-sm transition-all duration-300 hover:scale-105 hover:shadow-[0_8px_20px_rgba(220,38,38,0.16)]">
-                    <Ban
-                      className="h-5 w-5"
-                      strokeWidth={2.3}
-                    />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-
-                    <h2 className="text-lg font-bold text-slate-900">
-                      Cancel Service
-                    </h2>
-
-                    <p className="mt-1 text-sm font-medium text-slate-600">
-                      Please provide a reason for cancelling this service.
-                    </p>
-
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowRejectModal(false)
-                      setSelectedAppointment(null)
-                      setRejectionReason('')
-                    }}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 shadow-sm transition-all duration-200 hover:scale-110 hover:border-red-200 hover:bg-red-50 hover:text-red-600 hover:shadow-md active:scale-95 focus:outline-none focus:ring-2 focus:ring-red-100"
-                    aria-label="Close cancellation dialog"
-                    title="Close"
-                  >
-                    <X
-                      className="h-5 w-5"
-                      strokeWidth={2.2}
-                    />
-                  </button>
-
-                </div>
-
-              </div>
-
-
-              <div className="px-5 py-5 sm:px-6">
-
-                <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
-                    <div>
-
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        Customer
-                      </p>
-
-                      <p className="mt-1 break-words font-bold text-slate-900">
-                        {selectedAppointment.customer_name ||
-                          selectedAppointment.full_name ||
-                          'Unknown Customer'}
-                      </p>
-
-                    </div>
-
-                    <div>
-
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        Service
-                      </p>
-
-                      <p className="mt-1 break-words font-bold text-slate-800">
-                        {selectedAppointment.service_type ||
-                          'Service not specified'}
-                      </p>
-
-                    </div>
-
-                    <div>
-
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        Schedule
-                      </p>
-
-                      <p className="mt-1 text-sm text-slate-700">
-                        {selectedAppointment.appointment_date ||
-                          'Not specified'}
-                      </p>
-
-                    </div>
-
-                    <div>
-
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        Time
-                      </p>
-
-                      <div className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-slate-600">
-                        <Clock3 className="h-3.5 w-3.5" />
-                        {formatTime(
-                          selectedAppointment.appointment_time
-                        )}
-                      </div>
-
-                    </div>
-
-                    {/* BOOKING SOURCE */}
-
-                    <div>
-
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        Booking Source
-                      </p>
-
-                      <div className="mt-1">
-
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
-                            selectedAppointment.booking_source === 'walkin'
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-blue-100 text-blue-700'
-                          }`}
-                        >
-                          {selectedAppointment.booking_source === 'walkin'
-                            ? 'Walk-in'
-                            : 'Online'}
-                        </span>
-
-                      </div>
-
-                    </div>
-
-                    {/* ASSISTED BY */}
-
-                    <div>
-
-                      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        Assisted By
-                      </p>
-
-                      <p className="mt-1 break-words text-sm font-bold text-slate-700">
-                        {selectedAppointment.assisted_by_user?.name ||
-                          'Not specified'}
-                      </p>
-
-                    </div>
-
-                    {/* APPOINTMENT NUMBER */}
-
-                    <div className="mt-4 border-t border-slate-100 pt-3">
-
-                      <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
-                        <Settings className="h-3.5 w-3.5" />
-                        Appointment no.
-                      </div>
-
-                      <span
-                        className={`mt-1.5 inline-flex items-center rounded-full px-3 py-1.5 text-xs font-black ${getStatusStyle(
-                          selectedAppointment.status
-                        )}`}
-                      >
-                        #{selectedAppointment.id}
-                      </span>
-
-                    </div>
-
-                  </div>
-
-                </div>
-
-
-                <label className="block text-sm font-bold text-slate-700">
-                  Reason for Cancellation
-                </label>
-
-                <textarea
-                  value={rejectionReason}
-                  onChange={e =>
-                    setRejectionReason(
-                      e.target.value
-                    )
-                  }
-                  placeholder="Enter the reason for cancelling this service..."
-                  rows={5}
-                  className="mt-2 w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-red-400 focus:ring-2 focus:ring-red-100"
-                />
-
-                <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                  This reason will be recorded with the appointment
-                  together with the date and time.
-                </p>
-
-
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-
-                  <div className="flex items-start gap-2">
-
-                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
-
-                    <p className="text-xs leading-relaxed text-amber-800">
-                      This action will permanently record the
-                      cancellation reason for this service.
-                    </p>
-
-                  </div>
-
-                </div>
-
-              </div>
-
-
-              <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:px-6">
-
-                <button
-                  type="button"
-                  disabled={cancellingAppointmentId !== null}
-                  onClick={() => {
-                    setShowRejectModal(false)
-                    setSelectedAppointment(null)
-                    setRejectionReason('')
-                  }}
-                  className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Keep Appointment
-                </button>
-
-                <button
-                  type="button"
-                  disabled={
-                    !rejectionReason.trim() ||
-                    cancellingAppointmentId !== null
-                  }
-                  onClick={async () => {
-                    if (!selectedAppointment) return
-
-                    const reason = rejectionReason.trim()
-
-                    if (!reason) return
-
-                    setCancellingAppointmentId(
-                      selectedAppointment.id
-                    )
-
-                    try {
-                      await updateStatus(
-                        selectedAppointment.id,
-                        'cancelled',
-                        reason
-                      )
-
-                      setShowRejectModal(false)
-                      setSelectedAppointment(null)
-                      setRejectionReason('')
-                    } catch (error) {
-                      console.error(
-                        'Cancellation error:',
-                        error
-                      )
-                    } finally {
-                      setCancellingAppointmentId(null)
-                    }
-                  }}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-red-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-                >
-                  {cancellingAppointmentId === selectedAppointment?.id ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Cancelling...
-                    </>
-                  ) : (
-                    <>
-                      <Ban className="h-4 w-4" />
-                      Confirm Cancellation
-                    </>
-                  )}
-                </button>
-
-              </div>
-
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-200 bg-gradient-to-br from-red-50 to-rose-100 text-red-600 shadow-sm transition-all duration-300 hover:scale-110 hover:shadow-[0_8px_20px_rgba(220,38,38,0.18)] active:scale-95 sm:h-11 sm:w-11">
+              <Ban className="h-5 w-5 sm:h-6 sm:w-6" strokeWidth={2.2} />
             </div>
 
+            <div className="min-w-0 flex-1">
+              <h2 className="text-lg font-extrabold text-slate-900 sm:text-xl">
+                Cancel Service
+              </h2>
+              <p className="mt-1 text-xs font-medium leading-5 text-slate-500 sm:text-sm">
+                Please provide a reason for cancelling this service.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowRejectModal(false)
+                setSelectedAppointment(null)
+                setRejectionReason('')
+              }}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 shadow-sm transition-all duration-200 hover:scale-110 hover:border-red-200 hover:bg-red-50 hover:text-red-600 hover:shadow-md active:scale-95 focus:outline-none focus:ring-2 focus:ring-red-100"
+              aria-label="Close cancellation dialog"
+              title="Close"
+            >
+              <X className="h-5 w-5" strokeWidth={2.2} />
+            </button>
+
+          </div>
+        </div>
+
+        {/* BODY */}
+        <div className="px-4 py-5 sm:px-6">
+
+          {/* APPOINTMENT INFORMATION */}
+
+{(() => {
+  const normalizedBookingSource = String(
+    selectedAppointment.booking_source || ""
+  )
+    .toLowerCase()
+    .replace(/[-_]/g, "")
+
+  const isWalkIn =
+    normalizedBookingSource === "walkin" ||
+    !selectedAppointment.customer_id
+
+  const theme = isWalkIn
+    ? {
+        headerBg: "bg-amber-50/80",
+        iconBox: "bg-amber-100 text-amber-600",
+        title: "text-amber-700",
+        border: "border-amber-200",
+      }
+    : {
+        headerBg: "bg-blue-50/70",
+        iconBox: "bg-blue-100 text-blue-600",
+        title: "text-blue-700",
+        border: "border-slate-200",
+      }
+
+  const Row = ({ icon: Icon, label, children }) => (
+    <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-b-0">
+
+      <div className="flex shrink-0 items-center gap-2">
+        <Icon className="h-4 w-4 text-slate-500" strokeWidth={2} />
+        <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-slate-600">
+          {label}
+        </p>
+      </div>
+
+      <div className="min-w-0 break-words text-right text-sm font-semibold leading-snug text-slate-900">
+        {children}
+      </div>
+
+    </div>
+  )
+
+  const assistedByName = selectedAppointment.assisted_by_user?.name
+
+  return (
+    <div className={`mb-5 overflow-hidden rounded-2xl border bg-white shadow-sm ${theme.border}`}>
+
+      {/* CARD HEADER */}
+
+      <div className={`flex items-center gap-2.5 border-b border-slate-100 px-4 py-3 ${theme.headerBg}`}>
+
+        <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${theme.iconBox}`}>
+          <User className="h-4 w-4" strokeWidth={2.2} />
+        </div>
+
+        <p className={`text-xs font-extrabold uppercase tracking-[0.1em] ${theme.title}`}>
+          Customer Information
+        </p>
+
+      </div>
+
+      {/* ROWS */}
+
+      <Row icon={Hash} label="Appointment No.">
+        <span className="font-bold tabular-nums tracking-wide text-slate-950">
+          APPT-{String(selectedAppointment.id).padStart(6, "0")}
+        </span>
+      </Row>
+
+      <Row icon={User} label="Customer">
+        {selectedAppointment.customer_name ||
+          selectedAppointment.full_name ||
+          "Unknown Customer"}
+      </Row>
+
+      <Row icon={Wrench} label="Service">
+        {selectedAppointment.service_type || "Not specified"}
+      </Row>
+
+      <Row icon={CalendarDays} label="Date Request">
+        {formatLongDate(selectedAppointment.appointment_date)}
+      </Row>
+
+      <Row icon={Clock3} label="Time Request">
+        {formatTime(selectedAppointment.appointment_time)}
+      </Row>
+
+      <Row icon={Globe} label="Booking Source">
+        {isWalkIn ? "Walk-in" : "Online"}
+      </Row>
+
+      {/* ASSISTED BY: walk-in only, and only when a name exists */}
+
+      {isWalkIn && assistedByName && (
+        <Row icon={UserCheck} label="Assisted By">
+          {assistedByName}
+        </Row>
+      )}
+
+    </div>
+  )
+})()}
+            
+
+          {/* REASON */}
+          <label className="mb-2 block text-sm font-bold text-slate-700">
+            Cancellation Reason
+          </label>
+
+          <textarea
+            value={rejectionReason}
+            onChange={(e) => setRejectionReason(e.target.value)}
+            placeholder="Enter the reason for cancelling this service..."
+            rows={4}
+            className="w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-400 focus:ring-4 focus:ring-red-100"
+          />
+
+          {/* NOTICE */}
+          <div className="mt-4 flex gap-2 rounded-xl border border-yellow-200 bg-yellow-50 p-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-700" />
+            <p className="text-xs font-medium leading-relaxed text-yellow-800">
+              This cancellation will be recorded with the cancellation date, time, and reason.
+            </p>
           </div>
 
-        )}
+          {/* BUTTONS */}
+          <div className="mt-5 flex flex-col-reverse gap-2.5 sm:flex-row sm:gap-3">
+
+            <button
+              type="button"
+              disabled={cancellingAppointmentId !== null}
+              onClick={() => {
+                setShowRejectModal(false)
+                setSelectedAppointment(null)
+                setRejectionReason('')
+              }}
+              className="min-h-[44px] flex-1 rounded-xl bg-slate-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Keep Appointment
+            </button>
+
+            <button
+              type="button"
+              disabled={!rejectionReason.trim() || cancellingAppointmentId !== null}
+              onClick={async () => {
+                if (!selectedAppointment) return
+
+                const reason = rejectionReason.trim()
+                if (!reason) return
+
+                setCancellingAppointmentId(selectedAppointment.id)
+
+                try {
+                  await updateStatus(selectedAppointment.id, 'cancelled', reason)
+
+                  setShowRejectModal(false)
+                  setSelectedAppointment(null)
+                  setRejectionReason('')
+                } catch (error) {
+                  console.error('Cancellation error:', error)
+                } finally {
+                  setCancellingAppointmentId(null)
+                }
+              }}
+              className="flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {cancellingAppointmentId === selectedAppointment?.id ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cancelling...
+                </>
+              ) : (
+                <>
+                  <Ban className="h-4 w-4" />
+                  Confirm Cancel
+                </>
+              )}
+            </button>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+)}
 
     </div>
   )

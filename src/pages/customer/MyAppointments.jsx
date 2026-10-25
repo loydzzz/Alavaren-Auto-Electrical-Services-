@@ -6,7 +6,7 @@ import {
 } from 'react-router-dom'
 
 import toast, { Toaster } from 'react-hot-toast'
-import { TriangleAlert } from 'lucide-react'
+import { TriangleAlert, Store, Home, } from 'lucide-react'
 
 
 
@@ -60,6 +60,16 @@ function Icon({
         <path d="M6 10h12" />
         <circle cx="7" cy="17" r="1.8" />
         <circle cx="17" cy="17" r="1.8" />
+      </>
+    ),
+
+        carSide: (
+      <>
+        <path d="M5.2 17H4a1 1 0 0 1-1-1v-3a2 2 0 0 1 2-2h.4l1.6-3.5A2 2 0 0 1 8.8 6.5h6.2a2 2 0 0 1 1.6.8L19 11a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-1.2" />
+        <path d="M9.2 17h5.6" />
+        <path d="M12 6.5V11" />
+        <circle cx="7.2" cy="17" r="2" />
+        <circle cx="16.8" cy="17" r="2" />
       </>
     ),
     arrowLeft: (<><path d="M19 12H5M11 6l-6 6 6 6" /></>),
@@ -430,12 +440,19 @@ const isCancelled =
               Your appointment request was rejected.
             </p>
 
-            {appointment.rejected_at && (
+                                    {appointment.rejected_at && (
               <p className="mt-3 text-xs text-red-500/70">
                 Rejected on{' '}
                 {new Date(
                   appointment.rejected_at
-                ).toLocaleString()}
+                ).toLocaleString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                })}
               </p>
             )}
 
@@ -489,12 +506,19 @@ const isCancelled =
               This appointment has been cancelled.
             </p>
 
-            {appointment.cancelled_at && (
+                        {appointment.cancelled_at && (
               <p className="mt-3 text-xs text-orange-500/70">
                 Cancelled on{' '}
                 {new Date(
                   appointment.cancelled_at
-                ).toLocaleString()}
+                ).toLocaleString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                })}
               </p>
             )}
 
@@ -794,7 +818,7 @@ function AppointmentProgressHistory({
 
     return parsedDate.toLocaleString([], {
       year: 'numeric',
-      month: 'short',
+      month: 'long',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
@@ -1244,7 +1268,7 @@ function AppointmentProgressHistory({
                               attachment.created_at
                             ).toLocaleString([], {
                               year: 'numeric',
-                              month: 'short',
+                              month: 'long',
                               day: 'numeric',
                               hour: 'numeric',
                               minute: '2-digit',
@@ -1613,7 +1637,7 @@ function AppointmentMessaging({
     }
 
     return parsed.toLocaleString([], {
-      month: 'short',
+      month: 'long',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
@@ -1700,7 +1724,7 @@ function AppointmentMessaging({
                   Warranty ends{' '}
                   {new Date(warrantyEndsAt).toLocaleString([], {
                     year: 'numeric',
-                    month: 'short',
+                    month: 'long',
                     day: 'numeric',
                     hour: 'numeric',
                     minute: '2-digit',
@@ -1957,6 +1981,74 @@ function AppointmentMessaging({
   )
 }
 
+// =========================================================
+// DATE / TIME HELPERS
+// =========================================================
+
+function formatLongDate(value) {
+  if (!value) return 'Not specified'
+
+  const [year, month, day] = String(value)
+    .slice(0, 10)
+    .split('-')
+    .map(Number)
+
+  if (!year || !month || !day) return String(value)
+
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+function formatTime12(value) {
+  if (!value) return 'No time set'
+
+  try {
+    return new Date(`2000-01-01T${value}`).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  } catch {
+    return value
+  }
+}
+
+// =========================================================
+// DETAIL ITEM (icon + label + value)
+// =========================================================
+
+function DetailItem({ icon, label, value, emphasize = false }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-2.5 shadow-sm">
+
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-500">
+        <Icon name={icon} size={15} />
+      </div>
+
+      <div className="min-w-0">
+
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          {label}
+        </p>
+
+        <p
+          className={`break-words text-sm leading-tight ${
+            emphasize
+              ? 'font-black tracking-wide text-slate-900'
+              : 'font-bold text-slate-800'
+          }`}
+        >
+          {value}
+        </p>
+
+      </div>
+
+    </div>
+  )
+}
 
 
 
@@ -2633,7 +2725,7 @@ export default function MyAppointments() {
       [],
       {
         year: 'numeric',
-        month: 'short',
+        month: 'long',
         day: 'numeric',
         hour: 'numeric',
         minute: '2-digit',
@@ -5603,10 +5695,10 @@ const activeCount =
           "
         >
 
-          <Icon
-            name="x"
-            size={22}
-          />
+          <TriangleAlert
+  className="h-[22px] w-[22px]"
+  strokeWidth={2.2}
+/>
 
         </div>
 
@@ -5969,7 +6061,30 @@ const displayStatusLabel =
       : statusTheme.label
 
 
+const notesText = String(apt.notes || '').toLowerCase()
 
+const arrangement =
+  apt.service_arrangement ||
+  (notesText.includes('home / on-site')
+    ? 'home'
+    : notesText.includes('bring my vehicle to the shop')
+    ? 'shop'
+    : null)
+
+const arrangementBadge =
+  arrangement === 'home'
+    ? {
+        label: 'Home Service',
+        Icon: Home,
+        className: 'border-teal-200 bg-teal-50 text-teal-700',
+      }
+    : arrangement === 'shop'
+    ? {
+        label: 'Shop Service',
+        Icon: Store,
+        className: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+      }
+    : null
                 const conversationId =
                   customerConversationMap?.[
                     apt.id
@@ -6101,156 +6216,112 @@ className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_
 
                             <div className="flex flex-wrap items-center gap-2">
 
-                              <h3 className="text-lg font-black tracking-tight text-slate-900 sm:text-xl">
-                                {apt.service_type}
-                              </h3>
+                              <div className="flex flex-wrap items-center gap-2">
+
+  <h3 className="text-lg font-black tracking-tight text-slate-900 sm:text-xl">
+    {apt.service_type}
+  </h3>
+
+  {arrangementBadge && (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wide ${arrangementBadge.className}`}
+    >
+      <arrangementBadge.Icon className="h-3 w-3" />
+      {arrangementBadge.label}
+    </span>
+  )}
+
+</div>
 
                               
 
 
                             </div>
 
-                            <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            
+
+                           <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
   Appointment No. {appointmentNumber}
 </p>
 
+                           {/* DATE + TIME */}
 
-                           {/* VEHICLE INFORMATION */}
+<div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
 
-{(apt.vehicle_model ||
-  apt.plate_number ||
-  apt.fuel_type ||
-  apt.battery_voltage ||
-  apt.transmission_type) && (
+  <span className="inline-flex items-center gap-1.5 text-sm">
+    <Icon name="calendar" size={15} className="text-red-500" />
+    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+      Date
+    </span>
+    <span className="font-semibold text-slate-800">
+      {formatLongDate(apt.appointment_date)}
+    </span>
+  </span>
 
-  <div className="mt-2 flex flex-wrap items-center gap-2 sm:gap-3">
+  <span className="inline-flex items-center gap-1.5 text-sm">
+    <Icon name="clock" size={15} className="text-red-500" />
+    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+      Time
+    </span>
+    <span className="font-semibold text-slate-800">
+      {formatTime12(apt.appointment_time)}
+    </span>
+  </span>
 
-    {/* VEHICLE */}
+</div>
 
-    {apt.vehicle_model && (
-      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 sm:text-sm">
+{/* VEHICLE DETAILS WITH LABELS */}
 
-        <Icon
-          name="car"
-          size={14}
-        />
+<div className="mt-3 flex flex-wrap gap-2">
 
+  {apt.vehicle_model && (
+    <div className="inline-flex max-w-full items-baseline gap-2.5 rounded-lg border border-slate-200 bg-white/80 px-3.5 py-2 shadow-sm">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        Vehicle Type
+      </span>
+      <span className="truncate text-sm font-bold leading-none text-slate-800">
         {apt.vehicle_model}
-
       </span>
-    )}
+    </div>
+  )}
 
+  {[
+    ['Plate No.', apt.plate_number],
+    ['Fuel Type', apt.fuel_type],
+    ['Battery', apt.battery_voltage],
+    ['Transmission', apt.transmission_type],
+  ]
+    .filter(([, value]) => value)
+    .map(([label, value]) => (
 
-    {/* PLATE */}
+      <div
+        key={label}
+        className="inline-flex items-baseline gap-2.5 rounded-lg border border-slate-200 bg-white/80 px-3.5 py-2 shadow-sm"
+      >
 
-    {apt.plate_number && (
-      <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black tracking-wide text-slate-500 sm:text-xs">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          {label}
+        </span>
 
-        <Icon
-          name="tag"
-          size={12}
-        />
+        <span className="text-sm font-bold leading-none text-slate-800">
+          {value}
+        </span>
 
-        {apt.plate_number}
+      </div>
 
-      </span>
-    )}
+    ))}
 
-
-    {/* FUEL TYPE */}
-
-    {apt.fuel_type && (
-      <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-500 sm:text-xs">
-
-        <Icon
-          name="fuel"
-          size={12}
-        />
-
-        {apt.fuel_type}
-
-      </span>
-    )}
-
-
-    {/* BATTERY VOLTAGE */}
-
-    {apt.battery_voltage && (
-      <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-500 sm:text-xs">
-
-        <Icon
-          name="battery"
-          size={12}
-        />
-
-        {apt.battery_voltage}
-
-      </span>
-    )}
-
-
-    {/* TRANSMISSION */}
-
-    {apt.transmission_type && (
-      <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-500 sm:text-xs">
-
-        <Icon
-          name="settings"
-          size={12}
-        />
-
-        {apt.transmission_type}
-
-      </span>
-    )}
-
-  </div>
-)}
-
-
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-
-                              <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/75 px-2.5 py-1.5 text-[10px] font-semibold text-slate-500 shadow-sm sm:text-xs">
-
-                                <Icon
-                                  name="calendar"
-                                  size={13}
-                                />
-
-                                {apt.appointment_date}
-
-                              </span>
-
-
-                              <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/75 px-2.5 py-1.5 text-[10px] font-semibold text-slate-500 shadow-sm sm:text-xs">
-
-                                <Icon
-                                  name="clock"
-                                  size={13}
-                                />
-
-                                {apt.appointment_time
-                                  ? new Date(
-                                      `2000-01-01T${apt.appointment_time}`
-                                    ).toLocaleTimeString(
-                                      [],
-                                      {
-                                        hour: 'numeric',
-                                        minute: '2-digit',
-                                        hour12: true,
-                                      }
-                                    )
-                                  : 'No time set'}
-
-                              </span>
-
-                            </div>
-
+</div>
 
                             {apt.notes && (
-  <div className="mt-3 w-full min-w-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-50/75 px-3 py-2.5">
+  <div className="mt-3 w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50/75 px-3.5 py-2.5">
+
+    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+      Customer Note
+    </p>
+
     <p
-      className="w-full break-words whitespace-normal text-xs leading-relaxed text-slate-500"
+      className="mt-1 w-full break-words whitespace-normal text-sm font-medium leading-relaxed text-slate-700"
       style={{
         overflowWrap: 'anywhere',
         wordBreak: 'break-word',
@@ -6258,6 +6329,7 @@ className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_
     >
       {apt.notes}
     </p>
+
   </div>
 )}
 

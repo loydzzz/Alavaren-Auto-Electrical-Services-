@@ -26,12 +26,17 @@ import {
   Send,
   Settings,
   ArrowLeft,
+  Globe,
+  Store,
+  Home,
 } from 'lucide-react'
-
+import { Toaster } from 'react-hot-toast'
 
 
 import AccountStatusCard from "./AccountStatuscard.jsx";
 import AnnouncementBanner from '../../components/AnnouncementBanner'
+import AppointmentAttachments from '../../components/AppointmentAttachments'
+
 
 
 
@@ -148,7 +153,7 @@ case 'cancelled':
 
     return parsedDate.toLocaleString([], {
       year: 'numeric',
-      month: 'short',
+      month: 'long',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
@@ -341,7 +346,22 @@ const isLast =
 
 
 
+function formatLongDate(value) {
+  if (!value) return 'Not specified'
 
+  const [year, month, day] = String(value)
+    .slice(0, 10)
+    .split('-')
+    .map(Number)
+
+  if (!year || !month || !day) return String(value)
+
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
 
 // =========================================================
 // CUSTOMER HOME
@@ -1490,7 +1510,7 @@ useEffect(() => {
 
     return parsedDate.toLocaleString([], {
       year: 'numeric',
-      month: 'short',
+      month: 'long',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
@@ -1521,7 +1541,7 @@ useEffect(() => {
     return parsedDate.toLocaleString(
       [],
       {
-        month: 'short',
+        month: 'long',
         day: 'numeric',
         year: 'numeric',
         hour: 'numeric',
@@ -3637,6 +3657,7 @@ const notificationStatusStyles = {
 
   return (
 <div className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-slate-800">
+  <Toaster position="top-right" toastOptions={{ duration: 3500 }} />
     {/* =====================================================
         PREMIUM AUTOMOTIVE BACKGROUND
     ===================================================== */}
@@ -4089,9 +4110,9 @@ const accent = statusStyle
     }
     : isServiceStarted
   ? {
-      dot: 'bg-yellow-500',
-      text: 'text-yellow-600',
-      bar: 'from-yellow-400 to-yellow-600',
+      dot: 'bg-blue-600',
+      text: 'text-blue-600',
+      bar: 'from-blue-400 to-blue-600',
     }
     : isMessage
   ? {
@@ -4130,9 +4151,9 @@ const accent = statusStyle
     ? isUnread
       ? statusStyle.rowUnread
       : statusStyle.rowRead
-          : isUnread
+              : isUnread
     ? isServiceStarted
-      ? 'bg-yellow-50/60 hover:bg-yellow-50'
+      ? 'bg-blue-50/60 hover:bg-blue-50'
       : 'bg-blue-50/50 hover:bg-blue-50/70'
     : 'bg-white hover:bg-slate-50'
 }
@@ -4161,8 +4182,8 @@ const accent = statusStyle
     ${
   statusStyle
     ? `${statusStyle.icon} shadow-sm ring-1`
-        : isServiceStarted
-    ? 'bg-yellow-50 text-yellow-600'
+                : isServiceStarted
+    ? 'bg-blue-50 text-blue-600'
         : 'bg-blue-50 text-blue-600'
 }
   `}
@@ -5692,7 +5713,9 @@ const accent = statusStyle
 
 
 
-      <AccountStatusCard />
+           <div className="mb-8">
+        <AccountStatusCard />
+      </div>
 
       {/* ===================================================
           LIVE SERVICE PROGRESS
@@ -5774,6 +5797,10 @@ const accent = statusStyle
 
           <div className="space-y-6">
 
+                               
+
+                    
+
             {activeAppointments.map(apt => {
 
               const safeAppointmentId =
@@ -5798,6 +5825,30 @@ const accent = statusStyle
                 getAppointmentUnreadCount(
                   apt.id
                 )
+                const notesText = String(apt.notes || '').toLowerCase()
+
+const arrangement =
+  apt.service_arrangement ||
+  (notesText.includes('home / on-site')
+    ? 'home'
+    : notesText.includes('bring my vehicle to the shop')
+    ? 'shop'
+    : null)
+
+const arrangementBadge =
+  arrangement === 'home'
+    ? {
+        label: 'Home Service',
+        Icon: Home,
+        className: 'border-teal-200 bg-teal-50 text-teal-700',
+      }
+    : arrangement === 'shop'
+    ? {
+        label: 'Shop Service',
+        Icon: Store,
+        className: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+      }
+    : null
 
               const isInProgress =
                 apt.status?.toLowerCase() ===
@@ -5842,6 +5893,15 @@ const accent = statusStyle
                             Current Appointment
                           </span>
 
+                          {arrangementBadge && (
+  <span
+    className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wide ${arrangementBadge.className}`}
+  >
+    <arrangementBadge.Icon className="h-3 w-3" />
+    {arrangementBadge.label}
+  </span>
+)}
+
                           {isInProgress && (
 
                             <span className="flex items-center gap-1.5 rounded-full border border-red-100 bg-red-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-red-700">
@@ -5867,36 +5927,34 @@ const accent = statusStyle
 
                         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium text-slate-500">
 
-                          <span className="flex items-center gap-1.5">
+  <span className="flex items-center gap-1.5">
 
-                            <CalendarDays className="h-3.5 w-3.5 text-red-500" />
+    <CalendarDays className="h-3.5 w-3.5 text-red-500" />
 
-                            {apt.appointment_date}
+    {formatLongDate(apt.appointment_date)}
 
-                          </span>
+  </span>
 
-                          <span className="flex items-center gap-1.5">
+  <span className="flex items-center gap-1.5">
 
-                            <Clock3 className="h-3.5 w-3.5 text-red-500" />
+    <Clock3 className="h-3.5 w-3.5 text-red-500" />
 
-                            {apt.appointment_time
-                              ? new Date(
-                                  `2000-01-01T${apt.appointment_time}`
-                                ).toLocaleTimeString(
-                                  [],
-                                  {
-                                    hour: 'numeric',
-                                    minute:
-                                      '2-digit',
-                                    hour12:
-                                      true,
-                                  }
-                                )
-                              : 'No time set'}
+    {apt.appointment_time
+      ? new Date(
+          `2000-01-01T${apt.appointment_time}`
+        ).toLocaleTimeString(
+          [],
+          {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          }
+        )
+      : 'No time set'}
 
-                          </span>
+  </span>
 
-                        </div>
+</div>
 
                         {/* VEHICLE INFORMATION */}
 
@@ -6515,6 +6573,7 @@ const accent = statusStyle
 
                     )}
 
+
                     {/* HISTORY */}
 
 <AppointmentProgressHistory
@@ -6526,6 +6585,12 @@ const accent = statusStyle
   appointment={apt}
 />
 
+<AppointmentAttachments
+  appointmentId={apt.id}
+  canUpload={['pending', 'confirmed', 'in_progress'].includes(
+    apt.status
+  )}
+/>
 
                   </div>
                 </div>

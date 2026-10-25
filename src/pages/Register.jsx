@@ -272,6 +272,22 @@ async function fetchZipCode(cityCode, cityName, selectedLocality = null) {
   return ZIP_CODE_FALLBACKS[String(cityCode)] || ''
 }
 
+
+// =====================================================
+// NO-PASTE HELPER
+// Blocks paste (keyboard, right-click menu, mobile
+// long-press) and drag-and-drop text into a field,
+// so the customer has to type the value manually.
+// =====================================================
+
+const noPaste = {
+  onPaste: e => e.preventDefault(),
+  onDrop: e => e.preventDefault(),
+  onCopy: e => e.preventDefault(),
+  onCut: e => e.preventDefault()
+}
+
+
 // =====================================================
 // PHOTO HELPER
 // Shrinks the photo to max 800px and converts to JPEG
@@ -809,9 +825,9 @@ export default function Register() {
 
     if (!form.barangay) return 'Please select your barangay.'
 
-    if (!form.street.trim()) {
-      return 'Please enter your street, house number, or building.'
-    }
+    if (!/[A-Za-z0-9]/.test(form.street)) {
+  return 'Please enter your street, house number, or building.'
+}
 
     if (!fullNameRegex.test(fullName)) {
       return 'Full name can only contain letters and spaces. Numbers, emojis, and special characters are not allowed.'
@@ -938,7 +954,7 @@ export default function Register() {
       // -----------------------------------------------
 
       if (data?.user) {
-        const { error: insertError } = await supabase.from('users').insert({
+                const { error: insertError } = await supabase.from('users').insert({
           id: data.user.id,
           name: fullName,
           username,
@@ -947,7 +963,8 @@ export default function Register() {
           address,
           role: 'customer',
           avatar_url: avatarUrl,
-          avatar_uploaded_at: avatarUploadedAt
+          avatar_uploaded_at: avatarUploadedAt,
+          registration_avatar_path: path
         })
 
         if (insertError) {
@@ -2169,15 +2186,16 @@ export default function Register() {
                   <FaUser className="input-icon" />
 
                   <input
-                    type="text"
-                    placeholder="Juan Dela Cruz"
-                    value={form.fullName}
-                    onChange={e => updateField('fullName', e.target.value)}
-                    className="input"
-                    required
-                    maxLength={100}
-                    autoComplete="name"
-                  />
+  type="text"
+  placeholder="Juan Dela Cruz"
+  value={form.fullName}
+  onChange={e => updateField('fullName', e.target.value)}
+  className="input"
+  required
+  maxLength={100}
+  autoComplete="name"
+  {...noPaste}
+/>
                 </div>
               </div>
 
@@ -2190,16 +2208,17 @@ export default function Register() {
                   <FaUser className="input-icon" />
 
                   <input
-                    type="text"
-                    placeholder="juan_123"
-                    value={form.username}
-                    onChange={e => updateField('username', e.target.value)}
-                    className="input"
-                    required
-                    minLength={3}
-                    maxLength={30}
-                    autoComplete="username"
-                  />
+  type="text"
+  placeholder="juan_123"
+  value={form.username}
+  onChange={e => updateField('username', e.target.value)}
+  className="input"
+  required
+  minLength={3}
+  maxLength={30}
+  autoComplete="username"
+  {...noPaste}
+/>
                 </div>
               </div>
 
@@ -2212,20 +2231,17 @@ export default function Register() {
                   <FaEnvelope className="input-icon" />
 
                   <input
-                    type="email"
-                    placeholder="juan@gmail.com"
-                    value={form.email}
-                    onChange={e => updateField('email', e.target.value)}
-                    onBlur={() => setEmailTouched(true)}
-                    className="input"
-                    required
-                    autoComplete="email"
-                    aria-invalid={
-                      emailTouched &&
-                      form.email.length > 0 &&
-                      !isAllowedEmail(form.email)
-                    }
-                  />
+  type="email"
+  placeholder="juan@gmail.com"
+  value={form.email}
+  onChange={e => updateField('email', e.target.value)}
+  onBlur={() => setEmailTouched(true)}
+  className="input"
+  required
+  autoComplete="email"
+  aria-invalid={emailTouched && form.email.length > 0 && !isAllowedEmail(form.email)}
+  {...noPaste}
+/>
                 </div>
 
                 {emailTouched &&
@@ -2284,9 +2300,11 @@ export default function Register() {
                     pattern="^09[0-9]{9}$"
                     title="Please enter a valid Philippine mobile number starting with 09 and containing exactly 11 digits."
                     className="input"
-                    required
-                    autoComplete="tel"
-                  />
+  required
+  autoComplete="tel"
+  {...noPaste}
+/>
+
                 </div>
               </div>
 
@@ -2457,15 +2475,16 @@ export default function Register() {
                   <FaMapMarkerAlt className="input-icon" />
 
                   <input
-                    type="text"
-                    placeholder="House No., Street, Building"
-                    value={form.street}
-                    onChange={handleStreetChange}
-                    className="input"
-                    required
-                    maxLength={150}
-                    autoComplete="street-address"
-                  />
+  type="text"
+  placeholder="House No., Street, Building"
+  value={form.street}
+  onChange={handleStreetChange}
+  className="input"
+  required
+  maxLength={150}
+  autoComplete="street-address"
+  {...noPaste}
+/>
                 </div>
               </div>
 
@@ -2510,7 +2529,8 @@ export default function Register() {
                     required
                     minLength={12}
                     autoComplete="new-password"
-                  />
+  {...noPaste}
+/>
 
                   <button
                     type="button"
@@ -2582,10 +2602,12 @@ export default function Register() {
                     required
                     minLength={12}
                     autoComplete="new-password"
+                    {...noPaste}
                     aria-invalid={
                       form.confirmPassword.length > 0 &&
                       form.password !== form.confirmPassword
                     }
+
                   />
 
                   <button

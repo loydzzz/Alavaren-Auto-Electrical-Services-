@@ -21,6 +21,24 @@ import {
 
 import { XCircle } from 'lucide-react'
 
+
+function formatLongDate(value) {
+  if (!value) return 'Not specified'
+
+  const [year, month, day] = String(value)
+    .slice(0, 10)
+    .split('-')
+    .map(Number)
+
+  if (!year || !month || !day) return String(value)
+
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 export default function Appointments() {
 
   const [appointments, setAppointments] = useState([])
@@ -1120,8 +1138,8 @@ setAppointments(appointmentsWithNames)
                             </div>
 
                             <p className="whitespace-nowrap font-medium text-gray-700">
-                              {appt.appointment_date}
-                            </p>
+  {formatLongDate(appt.appointment_date)}
+</p>
 
                           </div>
 
@@ -1679,9 +1697,9 @@ setAppointments(appointmentsWithNames)
                               Date
                             </p>
 
-                            <p className="mt-1 truncate text-xs font-bold text-gray-800">
-                              {appt.appointment_date || 'Not specified'}
-                            </p>
+                           <p className="mt-1 break-words text-xs font-bold leading-snug text-gray-800">
+  {formatLongDate(appt.appointment_date)}
+</p>
 
                           </div>
 

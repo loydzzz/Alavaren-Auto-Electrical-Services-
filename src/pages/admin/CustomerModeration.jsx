@@ -34,9 +34,11 @@ import {
   FaChevronLeft,
   FaChevronRight,
   FaWrench,
+  FaTrash,
 } from 'react-icons/fa'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
+
 
 /* =========================================================
    CUSTOMER / USER ACCOUNT MANAGEMENT
@@ -44,6 +46,7 @@ import { useNavigate } from 'react-router-dom'
 
 export default function CustomerModeration() {
   const navigate = useNavigate()
+  const ATTACHMENT_BUCKET = 'service-task-attachments'
 
   // =========================================================
   // DATA
@@ -125,7 +128,9 @@ export default function CustomerModeration() {
           phone,
           role,
           created_at,
-          avatar_url,
+                    avatar_url,
+          cover_url,
+          registration_avatar_path,
           bio,
           birthday,
           gender,
@@ -567,23 +572,37 @@ export default function CustomerModeration() {
   // DATE FORMATTING
   // =========================================================
 
-  const formatDateTime = (
+    const formatDateTime = (
     value
   ) => {
     if (!value) {
       return 'Not available'
     }
 
-    return new Date(
-      value
-    ).toLocaleString(
-      'en-PH',
-      {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      }
-    )
+    const date = new Date(value)
+
+    if (Number.isNaN(date.getTime())) {
+      return 'Not available'
+    }
+
+    const datePart =
+      date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+
+    const timePart =
+      date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+
+    return `${datePart} at ${timePart}`
   }
+
+
 
   const formatDateOnly = (
     value
@@ -996,6 +1015,15 @@ export default function CustomerModeration() {
         if (error) {
           throw error
         }
+        if (!nextStatus) {
+  await supabase
+    .from('appointments')
+    .update({ technician_id: null, technician_role: null })
+    .eq('technician_id', user.id)
+    .in('status', ['pending', 'confirmed'])
+}
+
+
 
         toast.success(
           nextStatus
@@ -1090,6 +1118,277 @@ export default function CustomerModeration() {
       setHistory([])
     } finally {
       setHistoryLoading(false)
+    }
+  }
+
+    // =========================================================
+  // DELETE ACCOUNT
+  // =========================================================
+
+    const getStorageFile = (url) => {
+    if (!url) return null
+    const marker = '/storage/v1/object/public/'
+    const index = url.indexOf(marker)
+    if (index === -1) return null
+    const rest = url.slice(index + marker.length).split('?')[0]
+    const slash = rest.indexOf('/')
+    if (slash === -1) return null
+    return {
+      bucket: rest.slice(0, slash),
+      path: decodeURIComponent(rest.slice(slash + 1)),
+    }
+  }
+
+  const deleteUserFiles = async (user) => {
+    const targets = new Map() // bucket -> Set of paths
+
+    const add = (bucket, path) => {
+      if (!targets.has(bucket)) targets.set(bucket, new Set())
+      targets.get(bucket).add(path)
+    }
+
+    // 1. Everything in the user's folder
+    for (const bucket of ['avatars', 'covers']) {
+      const { data: files, error } = await supabase.storage
+        .from(bucket)
+        .list(user.id, { limit: 1000 })
+
+      if (error) {
+        console.error(`List failed (${bucket}):`, error)
+        continue
+      }
+      ;(files || []).forEach((f) => add(bucket, `${user.id}/${f.name}`))
+    }
+
+    // 2. The exact files saved on the user row (covers older uploads)
+    ;[user.avatar_url, user.cover_url]
+      .map(getStorageFile)
+      .filter(Boolean)
+      .forEach((f) => add(f.bucket, f.path))
+        // 2b. Original sign-up picture (kept even after the avatar was changed)
+    if (user.registration_avatar_path) {
+      add('avatars', user.registration_avatar_path)
+    }
+
+    // 3. Remove and verify
+    let removed = 0
+    let expected = 0
+
+    for (const [bucket, paths] of targets) {
+      const list = [...paths]
+      expected += list.length
+
+      const { data, error } = await supabase.storage.from(bucket).remove(list)
+
+      if (error) {
+        console.error(`Remove failed (${bucket}):`, error)
+        continue
+      }
+      removed += data?.length || 0
+    }
+
+    console.log(`Storage cleanup: removed ${removed} of ${expected} files`)
+    return { removed, expected }
+  }
+
+    const getAttachmentPaths = async (userId) => {
+    const { data: appts, error: apptError } = await supabase
+      .from('appointments')
+      .select('id')
+      .eq('customer_id', userId)
+
+    if (apptError) {
+      console.error('Appointment lookup failed:', apptError)
+      return []
+    }
+
+    const ids = (appts || []).map((a) => a.id)
+    if (!ids.length) return []
+
+    const { data: atts, error: attError } = await supabase
+      .from('service_task_attachments')
+      .select('file_path')
+      .in('appointment_id', ids)
+
+    if (attError) {
+      console.error('Attachment lookup failed:', attError)
+      return []
+    }
+
+    return (atts || []).map((a) => a.file_path).filter(Boolean)
+  }
+
+  // PASTE HERE
+  const getAttachmentFolderPaths = async (userId) => {
+    const paths = []
+
+    const { data: folders, error } = await supabase.storage
+      .from(ATTACHMENT_BUCKET)
+      .list(userId, { limit: 1000 })
+
+    if (error) {
+      console.error('Attachment folder list failed:', error)
+      return paths
+    }
+
+    for (const folder of folders || []) {
+      const { data: files } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .list(`${userId}/${folder.name}`, { limit: 1000 })
+
+      ;(files || []).forEach((f) =>
+        paths.push(`${userId}/${folder.name}/${f.name}`)
+      )
+    }
+
+    return paths
+  }
+
+  const handleDeleteAccount = async (user) => {
+
+    if (!user) return
+
+    const {
+      data: { user: currentAuthUser },
+    } = await supabase.auth.getUser()
+
+    if (user.id === currentAuthUser?.id) {
+      toast.error('You cannot delete your own account.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Permanently delete ${user.name}'s account?\n\nThis also deletes their appointments, moderation history, profile, and uploaded photos. This cannot be undone.`
+    )
+    if (!confirmed) return
+
+    try {
+      setProcessing(true)
+
+            // 0. Collect attachment file paths BEFORE the rows are deleted
+      const dbPaths = await getAttachmentPaths(user.id)
+      const folderPaths = await getAttachmentFolderPaths(user.id)
+      const attachmentPaths = [...new Set([...dbPaths, ...folderPaths])]
+
+      // 1. Database records + login
+      const { error } = await supabase.rpc('admin_delete_user', {
+        target_user_id: user.id,
+      })
+      if (error) throw error
+
+      // 2. Storage files (avatars, covers, registration photo)
+      const { removed, expected } = await deleteUserFiles(user)
+
+      // 3. Service task attachment files
+      let attRemoved = 0
+      for (let i = 0; i < attachmentPaths.length; i += 100) {
+        const chunk = attachmentPaths.slice(i, i + 100)
+        const { data, error: attErr } = await supabase.storage
+          .from(ATTACHMENT_BUCKET)
+          .remove(chunk)
+
+        if (attErr) console.error('Attachment remove failed:', attErr)
+        else attRemoved += data?.length || 0
+      }
+
+      console.log(
+        `Attachment cleanup: removed ${attRemoved} of ${attachmentPaths.length} files`
+      )
+
+      const allRemoved = removed + attRemoved
+      const allExpected = expected + attachmentPaths.length
+
+      if (allRemoved < allExpected) {
+        toast.error(
+          `Account deleted, but only ${allRemoved} of ${allExpected} files were removed. Check storage policies.`
+        )
+      } else {
+        toast.success('Account and all connected data deleted.')
+      }
+
+      setShowProfileModal(false)
+      setShowHistoryModal(false)
+      setSelectedCustomer(null)
+
+      await loadCustomers()
+    } catch (error) {
+      console.error('Delete account error:', error)
+      toast.error(error?.message || 'Unable to delete account.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+    const cleanupOrphanAvatars = async (dryRun = true) => {
+    // Every avatar URL still used by a real account
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('avatar_url')
+
+    if (usersError) return console.error(usersError)
+
+    const inUse = (users || []).map((u) => u.avatar_url).filter(Boolean)
+
+    // Files in the registrations folder
+    const { data: files, error } = await supabase.storage
+      .from('avatars')
+      .list('registrations', { limit: 1000 })
+
+    if (error) return console.error(error)
+
+    const orphans = (files || [])
+      .filter((f) => !f.name.startsWith('.'))
+      .map((f) => `registrations/${f.name}`)
+      .filter((path) => !inUse.some((url) => url.includes(path)))
+
+    // The old folder from a deleted user
+    orphans.push('f9c620d9-bf67-43ed-8666-68525316b577/avatar.jpg')
+
+    console.log(`Orphans (${orphans.length}):`, orphans)
+
+    if (dryRun) {
+      console.log('DRY RUN: nothing deleted. Run cleanupOrphanAvatars(false) to delete.')
+      return orphans
+    }
+
+    const { data, error: removeError } = await supabase.storage
+      .from('avatars')
+      .remove(orphans)
+
+    if (removeError) return console.error(removeError)
+    console.log(`Deleted ${data?.length || 0} files`)
+  }
+
+  useEffect(() => {
+    window.cleanupOrphanAvatars = cleanupOrphanAvatars
+    return () => delete window.cleanupOrphanAvatars
+  }, [])
+
+  // =========================================================
+  // DELETE HISTORY ENTRY
+  // =========================================================
+
+  const handleDeleteHistory = async (actionId) => {
+    const confirmed = window.confirm(
+      'Delete this moderation record? The customer will no longer see it either.'
+    )
+    if (!confirmed) return
+
+    try {
+      setProcessing(true)
+
+      const { error } = await supabase.rpc('admin_delete_moderation_action', {
+        action_id: actionId,
+      })
+      if (error) throw error
+
+      setHistory((prev) => prev.filter((h) => h.id !== actionId))
+      toast.success('Moderation record deleted.')
+    } catch (error) {
+      console.error('Delete history error:', error)
+      toast.error(error?.message || 'Unable to delete record.')
+    } finally {
+      setProcessing(false)
     }
   }
 
@@ -1333,6 +1632,41 @@ export default function CustomerModeration() {
     setStatusFilter('all')
     setCurrentPage(1)
   }
+
+
+  
+
+  // =========================================================
+// LOCK BACKGROUND SCROLL WHEN ANY MODAL IS OPEN
+// =========================================================
+
+useEffect(() => {
+  const isModalOpen =
+    showProfileModal ||
+    showWarningModal ||
+    showBanModal ||
+    showUnbanModal ||
+    showHistoryModal
+
+  if (!isModalOpen) return
+
+  const prevBody = document.body.style.overflow
+  const prevHtml = document.documentElement.style.overflow
+
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+
+  return () => {
+    document.body.style.overflow = prevBody
+    document.documentElement.style.overflow = prevHtml
+  }
+}, [
+  showProfileModal,
+  showWarningModal,
+  showBanModal,
+  showUnbanModal,
+  showHistoryModal,
+])
 
   // =========================================================
   // LOADING SCREEN
@@ -1841,6 +2175,9 @@ export default function CustomerModeration() {
                       handleToggleAccount={
                         handleToggleAccount
                       }
+                      handleDeleteAccount={
+                        handleDeleteAccount
+                      }
                       setSelectedCustomer={
                         setSelectedCustomer
                       }
@@ -1877,6 +2214,7 @@ export default function CustomerModeration() {
                       getActivityLabel={
                         getActivityLabel
                       }
+                      
                     />
                   )
                 )}
@@ -1903,6 +2241,9 @@ export default function CustomerModeration() {
                   }
                   handleToggleAccount={
                     handleToggleAccount
+                  }
+                  handleDeleteAccount={
+                    handleDeleteAccount
                   }
                   setSelectedCustomer={
                     setSelectedCustomer
@@ -1940,6 +2281,7 @@ export default function CustomerModeration() {
                   getActivityLabel={
                     getActivityLabel
                   }
+                  
                 />
               )
             )}
@@ -2311,6 +2653,8 @@ export default function CustomerModeration() {
             loading={
               historyLoading
             }
+            processing={processing}
+            onDeleteHistory={handleDeleteHistory}
             onClose={() => {
               setShowHistoryModal(
                 false
@@ -2453,6 +2797,8 @@ function UserTableRow({
   user,
   openProfile,
   handleToggleAccount,
+    handleDeleteAccount,
+
   setSelectedCustomer,
   setReason,
   setAdminNotes,
@@ -2571,6 +2917,8 @@ function UserTableRow({
 
       </td>
 
+      
+
       {/* ACTIVITY */}
 
       <td className="px-4 py-4">
@@ -2667,6 +3015,15 @@ function UserTableRow({
             )}
           </ActionButton>
 
+                    <ActionButton
+            title="Delete Account"
+            onClick={() => handleDeleteAccount(user)}
+            disabled={processing}
+            variant="danger"
+          >
+            <FaTrash />
+          </ActionButton>
+
           {/* CUSTOMER MODERATION */}
 
           {user.role ===
@@ -2686,6 +3043,8 @@ function UserTableRow({
               >
                 <FaHistory />
               </ActionButton>
+
+
 
               {user.moderationStatus !==
                 'banned' && (
@@ -2765,6 +3124,7 @@ function UserMobileCard({
   user,
   openProfile,
   handleToggleAccount,
+  handleDeleteAccount,
   setSelectedCustomer,
   setReason,
   setAdminNotes,
@@ -3000,6 +3360,17 @@ function UserMobileCard({
             : 'Reactivate'}
         </MobileAction>
 
+                
+
+        <MobileAction
+          onClick={() => handleDeleteAccount(user)}
+          variant="danger"
+          disabled={processing}
+        >
+          <FaTrash />
+          Delete
+        </MobileAction>
+
         {user.role ===
           'customer' && (
           <>
@@ -3018,6 +3389,8 @@ function UserMobileCard({
               <FaHistory />
               History
             </MobileAction>
+
+                    
 
             {user.moderationStatus !==
               'banned' && (
@@ -3434,9 +3807,9 @@ function ProfileModal({
   getAccountAgeLabel,
 }) {
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-5">
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">
 
-      <div className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+  <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-3xl sm:rounded-2xl">
 
         {/* HEADER */}
 
@@ -3690,6 +4063,8 @@ function ProfileModal({
             </div>
 
           </div>
+
+          
 
           {/* CUSTOMER DATA */}
 
@@ -3976,10 +4351,9 @@ function ModerationModal({
     type === 'ban'
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">
 
-      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
-
+  <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl">
         {/* HEADER */}
 
         <div
@@ -4032,8 +4406,7 @@ function ModerationModal({
 
         {/* BODY */}
 
-        <div className="space-y-4 p-5">
-
+<div className="space-y-4 overflow-y-auto p-5">
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
 
             <p className="text-xs leading-5 text-gray-600">
@@ -4220,13 +4593,15 @@ function HistoryModal({
   user,
   history,
   loading,
+  processing,
+  onDeleteHistory,
   onClose,
   formatDateTime,
 }) {
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">
 
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+  <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
 
         {/* HEADER */}
 
@@ -4295,18 +4670,17 @@ function HistoryModal({
           ) : (
             <div className="space-y-3">
 
-              {history.map(
+                            {history.map(
                 (item) => (
                   <HistoryItem
                     key={item.id}
                     item={item}
-                    formatDateTime={
-                      formatDateTime
-                    }
+                    formatDateTime={formatDateTime}
+                    processing={processing}
+                    onDelete={onDeleteHistory}
                   />
                 )
               )}
-
             </div>
           )}
 
@@ -4352,6 +4726,8 @@ function HistoryModal({
 function HistoryItem({
   item,
   formatDateTime,
+  processing,
+  onDelete,
 }) {
   const isBan =
     item.action_type ===
@@ -4451,6 +4827,18 @@ function HistoryItem({
 
             </div>
           )}
+          {/* DELETE BUTTON */}
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              disabled={processing}
+              onClick={() => onDelete(item.id)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+            >
+              <FaTrash />
+              Delete
+            </button>
+          </div>
 
         </div>
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useLocation, useNavigate } from 'react-router-dom'
 import toast, { Toaster } from 'react-hot-toast'
-import { Globe2, Store, Loader2, ChevronDown } from 'lucide-react'
+import { Globe2, Store, Loader2, ChevronDown, Lock } from 'lucide-react'
 
 
 const ATTACHMENT_BUCKET = 'service-task-attachments'
@@ -54,6 +54,19 @@ const Icon = ({
   }
 
   const icons = {
+
+    user: (
+  <svg {...common}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </svg>
+),
+
+phone: (
+  <svg {...common}>
+    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z" />
+  </svg>
+),
     car: (
       <svg {...common}>
         <path d="M5 17h14l1-5-2-5H6L4 12l1 5Z" />
@@ -227,6 +240,26 @@ mapPin: (
         <path d="M12 11v5M12 8h.01" />
       </svg>
     ),
+
+        location: (
+      <svg {...common}>
+        <path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z" />
+        <circle cx="12" cy="10" r="2.5" />
+      </svg>
+    ),
+
+    loader: (
+      <svg {...common}>
+        <path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+      </svg>
+    ),
+
+    alertCircle: (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v5M12 16h.01" />
+      </svg>
+    ),
   }
 
   return icons[name] || icons.settings
@@ -261,6 +294,48 @@ function getTimeSlots(arrangement, dateValue, now = new Date()) {
   return [`${pad(now.getHours())}:${pad(now.getMinutes())}`, ...upcoming]
 }
 
+// "2026-10-23" + "09:00" -> "October 23, 2026 at 9:00 AM"
+function formatBookingSchedule(date, time) {
+  if (!date) return 'Not specified'
+
+  const datePart = new Date(`${date}T00:00:00`).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+
+  if (!time) return datePart
+
+  const timePart = new Date(`1970-01-01T${time}`).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  return `${datePart} at ${timePart}`
+}
+
+// ISO timestamp -> "October 23, 2026 at 9:00 AM"
+function formatTimestamp(value) {
+  if (!value) return ''
+
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+
+  const datePart = d.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+
+  const timePart = d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  return `${datePart} at ${timePart}`
+}
 
 
 export default function Booking() {
@@ -302,6 +377,34 @@ const [loadingZip, setLoadingZip] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [roleLoading, setRoleLoading] = useState(true)
+  // =====================================================
+// SUNDAY LOCK (WALK-IN)
+// Walk-in booking is closed on Sundays.
+// "now" refreshes every minute so the lock lifts
+// automatically once Monday starts.
+// =====================================================
+
+const [lockNow, setLockNow] = useState(() => new Date())
+
+useEffect(() => {
+  const timer = setInterval(() => {
+    setLockNow(new Date())
+  }, 60 * 1000)
+
+  return () => clearInterval(timer)
+}, [])
+
+const isSundayToday = lockNow.getDay() === 0
+
+// Only walk-in (admin) booking is locked, and only after
+// the role has been checked so customers never see a flash of it.
+const isWalkInLocked = isAdmin && !roleLoading && isSundayToday
+
+const lockedDateLabel = lockNow.toLocaleDateString('en-US', {
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+})
 const [currentUser, setCurrentUser] = useState(null)
 
 // =====================================================
@@ -967,6 +1070,11 @@ const handleAgreementScroll = (e) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+  
+    if (isWalkInLocked) {
+  toast.error('Walk-in booking is locked on Sundays.')
+  return
+}
 
     if (!isAdmin && !serviceArrangement) {
   setServiceArrangementError(true)
@@ -977,6 +1085,8 @@ const handleAgreementScroll = (e) => {
 
   return
 }
+
+
 
     if (!validateBookingForm()) {
       return
@@ -1086,11 +1196,37 @@ const bookingSource =
     ? 'walkin'
     : 'online'
 
-        
+// ==========================================
+// UPLOADER = whoever is logged in
+// Walk-in  → the admin
+// Online   → the customer
+// ==========================================
+const {
+  data: uploaderProfile,
+  error: uploaderError,
+} = await supabase
+  .from('users')
+  .select('name, role')
+  .eq('id', user.id)
+  .single()
 
-       let customerName = ''
+if (uploaderError) {
+  throw uploaderError
+}
+
+const uploaderName =
+  uploaderProfile?.name || 'Unknown user'
+
+const uploaderRole =
+  uploaderProfile?.role ||
+  (isAdminBooking ? 'admin' : 'customer')
+
+let customerName = ''
 let customerPhone = ''
 let customerAddress = ''
+        
+
+       
 
 if (isAdminBooking) {
   // ==========================================
@@ -1181,6 +1317,7 @@ const {
       customer_address: customerAddress,
 
       booking_source: bookingSource,
+      service_arrangement: isAdminBooking ? 'shop' : (serviceArrangement || null),
 
       assisted_by:
   isAdminBooking
@@ -1361,13 +1498,11 @@ setSubmittedBooking({
                 file_size:
                   file.size,
                 uploaded_by:
-                  user.id,
-                uploaded_by_name:
-                  customerName,
-                uploaded_by_role:
-  isAdminBooking
-    ? 'admin'
-    : 'customer',
+  user.id,
+uploaded_by_name:
+  uploaderName,
+uploaded_by_role:
+  uploaderRole,
 
               },
             ])
@@ -1746,15 +1881,20 @@ const formattedTime = form.time
     )
   : form.time
 
-const notificationTitle =
-  'Appointment Submitted'
+const isWalkIn = bookingSource === 'walkin'
+
+const bookingSourceLabel = isWalkIn
+  ? 'Walk-in Booking'
+  : 'Online Booking'
+
+const notificationTitle = 'Appointment Submitted'
 
 const notificationMessage =
   `Appointment No. ${appointmentNumber}\n\n` +
+  `${bookingSourceLabel}\n\n` +
   `Hi ${customerName}, your appointment for ${form.service_type} ` +
   `has been submitted for ${formattedDate} at ${formattedTime}.\n\n` +
   `Your request is currently pending confirmation.`
-
 
 
 
@@ -2853,6 +2993,36 @@ useEffect(() => {
 }, [isAdmin, form.date, form.time, serviceArrangement, slotNow])
 
 
+useEffect(() => {
+  const isModalOpen =
+    showSuccess ||
+    showAttachmentModal ||
+    showBookingAgreement ||
+    viewingBookingAgreement ||
+    isWalkInLocked;
+
+  if (!isModalOpen) return;
+
+  const prevBody = document.body.style.overflow;
+  const prevHtml = document.documentElement.style.overflow;
+
+  document.body.style.overflow = "hidden";
+  document.documentElement.style.overflow = "hidden";
+
+  return () => {
+    document.body.style.overflow = prevBody;
+    document.documentElement.style.overflow = prevHtml;
+  };
+}, [
+  showSuccess,
+  showAttachmentModal,
+  showBookingAgreement,
+  viewingBookingAgreement,
+  isWalkInLocked,
+]);
+
+
+
 
 
 
@@ -3193,7 +3363,7 @@ useEffect(() => {
 
                     <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white transition focus-within:border-red-500 focus-within:ring-4 focus-within:ring-red-500/10">
 
-                      <div className="flex w-12 items-center justify-center bg-blue-950 text-white">
+                      <div className="flex w-12 items-center justify-center bg-slate-900 text-white">
 
                         <div className="text-center">
 
@@ -3281,6 +3451,8 @@ useEffect(() => {
           <option value="">Select fuel type</option>
           <option value="Gasoline">Gasoline</option>
           <option value="Diesel">Diesel</option>
+          <option value="Electric">Electric</option>
+          <option value="Hybrid">Hybrid</option>
         </select>
 
         <Icon
@@ -3396,43 +3568,40 @@ useEffect(() => {
         Full Name
       </label>
 
-      <input
-        type="text"
-       value={
-  isAdmin
-    ? form.customer_name
-    : customer.name
-}
+      <div className="relative">
+  <Icon
+    name="user"
+    size={18}
+    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+  />
 
-        onChange={(e) => {
-          if (!isAdmin) return
+  <input
+    type="text"
+    value={isAdmin ? form.customer_name : customer.name}
+    onChange={(e) => {
+      if (!isAdmin) return
 
-          const value = e.target.value
-            .replace(/[<>]/g, '')
-            .replace(/\s+/g, ' ')
-            .trimStart()
+      const value = e.target.value
+        .replace(/[<>]/g, '')
+        .replace(/\s+/g, ' ')
+        .trimStart()
 
-          setForm((previous) => ({
-  ...previous,
-  customer_name: value,
-}))
-
-        }}
-        readOnly={!isAdmin}
-        placeholder={
-          isAdmin
-            ? 'Enter customer full name'
-            : ''
-        }
-        maxLength={100}
-        autoComplete="off"
-        className={`w-full rounded-xl border px-3 py-3 text-sm outline-none transition ${
-          isAdmin
-            ? 'border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
-            : 'border-slate-200 bg-slate-50 text-slate-600'
-        }`}
-      />
-
+      setForm((previous) => ({
+        ...previous,
+        customer_name: value,
+      }))
+    }}
+    readOnly={!isAdmin}
+    placeholder={isAdmin ? 'Enter customer full name' : ''}
+    maxLength={100}
+    autoComplete="off"
+    className={`w-full rounded-xl border py-3 pl-10 pr-3 text-sm outline-none transition ${
+      isAdmin
+        ? 'border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
+        : 'border-slate-200 bg-slate-50 text-slate-600'
+    }`}
+  />
+</div>
     </div>
 
     {/* MOBILE NUMBER */}
@@ -3443,45 +3612,52 @@ useEffect(() => {
   Mobile Number
 </label>
 
-<input
-  type="text"
-  value={isAdmin ? form.mobile_number : customer.phone}
-  onChange={(e) => {
-    if (!isAdmin) return
+<div className="relative">
+  <Icon
+    name="phone"
+    size={18}
+    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+  />
 
-    let value = e.target.value.replace(/\D/g, '')
+  <input
+    type="text"
+    value={isAdmin ? form.mobile_number : customer.phone}
+    onChange={(e) => {
+      if (!isAdmin) return
 
-    // Maximum of 11 digits
-    value = value.slice(0, 11)
+      let value = e.target.value.replace(/\D/g, '')
 
-    // First digit must be 0
-    if (value.length >= 1 && value[0] !== '0') {
-      return
-    }
+      // Maximum of 11 digits
+      value = value.slice(0, 11)
 
-    // Second digit must be 9
-    if (value.length >= 2 && value[1] !== '9') {
-      return
-    }
+      // First digit must be 0
+      if (value.length >= 1 && value[0] !== '0') {
+        return
+      }
 
-    setForm((previous) => ({
-      ...previous,
-      mobile_number: value,
-    }))
-  }}
-  readOnly={!isAdmin}
-  placeholder={isAdmin ? '09XXXXXXXXX' : ''}
-  maxLength={11}
-  inputMode="numeric"
-  autoComplete="tel"
-  pattern="09[0-9]{9}"
-  className={`w-full rounded-xl border px-3 py-3 text-sm outline-none transition ${
-    isAdmin
-      ? 'border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
-      : 'border-slate-200 bg-slate-50 text-slate-600'
-  }`}
-/>
+      // Second digit must be 9
+      if (value.length >= 2 && value[1] !== '9') {
+        return
+      }
 
+      setForm((previous) => ({
+        ...previous,
+        mobile_number: value,
+      }))
+    }}
+    readOnly={!isAdmin}
+    placeholder={isAdmin ? '09XXXXXXXXX' : ''}
+    maxLength={11}
+    inputMode="numeric"
+    autoComplete="tel"
+    pattern="09[0-9]{9}"
+    className={`w-full rounded-xl border py-3 pl-10 pr-3 text-sm outline-none transition ${
+      isAdmin
+        ? 'border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
+        : 'border-slate-200 bg-slate-50 text-slate-600'
+    }`}
+  />
+</div>
     </div>
 
    
@@ -4538,7 +4714,7 @@ if (date.getDay() === 0) return null
       ONLINE INFORMATION
   ===================================================== */}
 
-  {!isAdmin && (
+    {!isAdmin && (
 
     <div className="mt-3 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-500">
 
@@ -4549,18 +4725,14 @@ if (date.getDay() === 0) return null
       />
 
       <p>
+        {serviceArrangement === 'home'
+          ? 'Home / On-Site service is available between'
+          : 'Shop service is available between'}
         <span className="font-semibold text-slate-700">
-        <p>
-  {serviceArrangement === 'home'
-    ? 'Home / On-Site service is available between'
-    : 'Shop service is available between'}
-  <span className="font-semibold text-slate-700">
-    {serviceArrangement === 'home'
-      ? ' 8:00 AM and 4:00 PM'
-      : ' 8:00 AM and 6:00 PM'}
-  </span>.
-</p>
-        </span>
+          {serviceArrangement === 'home'
+            ? ' 8:00 AM and 4:00 PM'
+            : ' 8:00 AM and 6:00 PM'}
+        </span>.
       </p>
 
     </div>
@@ -4949,6 +5121,78 @@ if (date.getDay() === 0) return null
 
           </aside>
 
+          {/* =====================================================
+    SUNDAY LOCK MODAL
+    Walk-in (admin) only
+===================================================== */}
+
+{isWalkInLocked && (
+  <div
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="sunday-lock-title"
+    className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+  >
+    <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
+
+      {/* HEADER */}
+      <div className="relative overflow-hidden bg-slate-950 px-6 py-8 text-center text-white">
+
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(220,38,38,0.28),_transparent_60%)]" />
+
+        <div className="relative mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-600 shadow-xl shadow-red-950/50">
+          <Lock size={36} strokeWidth={2.2} />
+        </div>
+
+        <h2
+          id="sunday-lock-title"
+          className="relative mt-5 text-2xl font-black"
+        >
+          Feature Locked
+        </h2>
+
+        <p className="relative mt-1 text-[11px] font-bold uppercase tracking-[0.2em] text-red-400">
+          Walk-in Booking
+        </p>
+
+      </div>
+
+      {/* BODY */}
+      <div className="p-6 text-center">
+
+        <p className="text-sm leading-6 text-slate-600">
+          This feature is locked during this time.
+        </p>
+
+        <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3">
+          <p className="text-base font-black text-red-700">
+            {lockedDateLabel}
+          </p>
+          <p className="mt-0.5 text-xs font-bold uppercase tracking-widest text-red-500">
+            "Sunday"
+          </p>
+        </div>
+
+        <p className="mt-4 text-sm leading-6 text-slate-600">
+          Booking operations can be continued tomorrow.
+          Thank you for your understanding.
+        </p>
+
+        <button
+          type="button"
+          onClick={handleBack}
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-red-900/20 transition hover:bg-red-700"
+        >
+          <Icon name="arrowLeft" size={17} />
+          Back to Dashboard
+        </button>
+
+      </div>
+
+    </div>
+  </div>
+)}
+
         </div>
 
       </main>
@@ -5210,13 +5454,7 @@ if (date.getDay() === 0) return null
 
 {bookingAgreementAcceptedAt && (
   <p className="mt-2 text-xs font-medium text-slate-600">
-    Accepted on:{' '}
-    {new Date(
-      bookingAgreementAcceptedAt
-    ).toLocaleString('en-PH', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    })}
+    Accepted on: {formatTimestamp(bookingAgreementAcceptedAt)}
   </p>
 )}
       </div>
@@ -6261,10 +6499,8 @@ const { error } = await supabase
     </span>
 
     <span className="min-w-0 text-right text-xs font-bold text-slate-800">
-      {submittedBooking.date}
-      {' · '}
-      {submittedBooking.time}
-    </span>
+  {formatBookingSchedule(submittedBooking.date, submittedBooking.time)}
+</span>
 
   </div>
 

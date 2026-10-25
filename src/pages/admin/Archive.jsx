@@ -130,23 +130,46 @@ const THEMES = {
 function formatTimestamp(timestamp) {
   if (!timestamp) return 'Not available'
 
-  return new Date(timestamp).toLocaleString([], {
+  const date = new Date(timestamp)
+
+  if (Number.isNaN(date.getTime())) return 'Not available'
+
+  const datePart = date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
+  })
+
+  const timePart = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  return `${datePart} at ${timePart}`
+}
+
+function formatTime(time) {
+  if (!time) return 'N/A'
+
+  return new Date(`1970-01-01T${time}`).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
   })
 }
 
-function formatTime(time) {
-  if (!time) return 'N/A'
+function formatDateOnly(value) {
+  if (!value) return 'N/A'
 
-  return new Date(`1970-01-01T${time}`).toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
+  const [year, month, day] = String(value).slice(0, 10).split('-').map(Number)
+
+  if (!year || !month || !day) return String(value)
+
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
   })
 }
 
@@ -369,7 +392,7 @@ function AppointmentInfoGrid({
           { label: 'Service', value: appointment.service_type, icon: Wrench },
           {
             label: 'Date Request',
-            value: appointment.appointment_date,
+            value: formatDateOnly(appointment.appointment_date),
             icon: CalendarDays,
           },
           {
@@ -428,7 +451,7 @@ function StatusReasonPanel({ appointment, className = 'mt-4' }) {
   if (appointment?.status !== 'cancelled') return null
 
   const rejected = Boolean(appointment.rejected_at)
-  const ReasonIcon = rejected ? ShieldX : CircleX
+  const ReasonIcon = rejected ? ShieldX : Ban
 
   const tone = rejected
     ? {
@@ -544,6 +567,19 @@ function AiDetectionPanel({
 ========================================================= */
 
 export default function Archive() {
+
+  const AUTO_DELETE_MONTHS = 2
+
+function getAutoDeleteInfo(appointment) {
+  if (!appointment?.archived_at) return null
+
+  const deleteAt = new Date(appointment.archived_at)
+  deleteAt.setMonth(deleteAt.getMonth() + AUTO_DELETE_MONTHS)
+
+  const daysLeft = Math.ceil((deleteAt - new Date()) / (1000 * 60 * 60 * 24))
+
+  return { deleteAt, daysLeft: Math.max(0, daysLeft) }
+}
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -2050,25 +2086,61 @@ useEffect(() => {
     alert('Appointment restored successfully.')
   }
 
-  const deleteAppointment = async (id) => {
-    const confirmed = window.confirm(
-      'Are you sure you want to permanently delete this archived appointment?'
-    )
+ const deleteAppointment = async (id) => {
+  const confirmed = window.confirm(
+    'Are you sure you want to permanently delete this archived appointment?'
+  )
+  if (!confirmed) return
 
-    if (!confirmed) return
+  // 1. Get the file paths before anything is removed
+  const { data: files, error: filesError } = await supabase
+    .from('service_task_attachments')
+    .select('id, file_path')
+    .eq('appointment_id', id)
 
-    const { error } = await supabase.from('appointments').delete().eq('id', id)
+  if (filesError) {
+    console.error('Fetch attachments before delete error:', filesError)
+    alert('Failed to delete appointment.')
+    return
+  }
 
-    if (error) {
-      console.error('Delete appointment error:', error)
-      alert('Failed to delete appointment.')
+  // 2. Remove the actual files from storage
+  const paths = (files || []).map((f) => f.file_path).filter(Boolean)
+
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage
+      .from('service-task-attachments')
+      .remove(paths)
+
+    if (storageError) {
+      console.error('Storage delete error:', storageError)
+      alert(`Failed to delete attachment files: ${storageError.message}`)
       return
     }
-
-    setAppointments((current) =>
-      current.filter((appointment) => appointment.id !== id)
-    )
   }
+
+  // 3. Remove attachment rows (harmless if cascade already handles it)
+  await supabase
+    .from('service_task_attachments')
+    .delete()
+    .eq('appointment_id', id)
+
+  // 4. Delete the appointment
+  const { error } = await supabase.from('appointments').delete().eq('id', id)
+
+  if (error) {
+    console.error('Delete appointment error:', error)
+    alert('Failed to delete appointment.')
+    return
+  }
+
+  setAppointments((current) => current.filter((a) => a.id !== id))
+  setAttachments((current) => {
+    const next = { ...current }
+    delete next[id]
+    return next
+  })
+}
 
   /* =========================================================
      MESSAGE BANNER DATA
@@ -2123,6 +2195,30 @@ useEffect(() => {
       archiveScrollRafRef.current = null
     })
   }
+
+  useEffect(() => {
+  const isModalOpen =
+    !!selectedAppointment ||
+    !!selectedAttachmentAppointment ||
+    !!selectedConversationAppointment
+
+  if (!isModalOpen) return
+
+  const prevBody = document.body.style.overflow
+  const prevHtml = document.documentElement.style.overflow
+
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+
+  return () => {
+    document.body.style.overflow = prevBody
+    document.documentElement.style.overflow = prevHtml
+  }
+}, [
+  selectedAppointment,
+  selectedAttachmentAppointment,
+  selectedConversationAppointment,
+])
 
   /* =========================================================
      RENDER
@@ -2188,11 +2284,18 @@ useEffect(() => {
               Appointment Archive
             </h2>
 
+            
+
             <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500 sm:text-base">
               Review completed and cancelled appointments, customer
               information, assigned technicians, vehicle details, and service
               details.
             </p>
+
+            <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-gray-400">
+  <Clock3 className="h-3.5 w-3.5" />
+  Archived appointments are permanently deleted 2 months after archiving.
+</p>
           </div>
 
           {/* =================================================
@@ -2519,6 +2622,26 @@ useEffect(() => {
                       </div>
                     </div>
 
+                    {(() => {
+  const info = getAutoDeleteInfo(appointment)
+  if (!info) return null
+
+  const urgent = info.daysLeft <= 7
+
+  return (
+    <p
+      className={`mt-1 flex items-center gap-1 text-xs font-semibold ${
+        urgent ? 'text-red-600' : 'text-gray-400'
+      }`}
+    >
+      <Clock3 className="h-3.5 w-3.5" />
+      {info.daysLeft === 0
+        ? 'Deletes today'
+        : `Auto-deletes in ${info.daysLeft} day${info.daysLeft === 1 ? '' : 's'}`}
+    </p>
+  )
+})()}
+
                     <span
                       className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold uppercase tracking-wide ${
                         state === 'completed'
@@ -2789,8 +2912,8 @@ useEffect(() => {
       ===================================================== */}
 
       {selectedAppointment && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+<div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">          <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+            
             <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-4 sm:px-6">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
@@ -2907,8 +3030,7 @@ useEffect(() => {
       ===================================================== */}
 
       {selectedAttachmentAppointment && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+<div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">          <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-4 sm:px-6">
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
@@ -3045,8 +3167,7 @@ useEffect(() => {
       ===================================================== */}
 
       {selectedConversationAppointment && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-5">
-          {/* FLOATING BACK BUTTON */}
+<div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-5">          {/* FLOATING BACK BUTTON */}
           <button
             type="button"
             onClick={closeConversation}

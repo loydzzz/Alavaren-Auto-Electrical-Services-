@@ -44,6 +44,23 @@ function formatTimestamp(timestamp) {
   })
 }
 
+function formatLongDate(value) {
+  if (!value) return 'N/A'
+
+  const [year, month, day] = String(value)
+    .slice(0, 10)
+    .split('-')
+    .map(Number)
+
+  if (!year || !month || !day) return String(value)
+
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 function formatTime(time) {
   if (!time) return 'N/A'
 
@@ -234,10 +251,10 @@ function AppointmentInfoGrid({ appointment }) {
         items={[
           { label: 'Service', value: appointment.service_type, icon: Wrench },
           {
-            label: 'Date Request',
-            value: appointment.appointment_date,
-            icon: CalendarDays,
-          },
+  label: 'Date Request',
+  value: formatLongDate(appointment.appointment_date),
+  icon: CalendarDays,
+},
           {
             label: 'Time Request',
             value: formatTime(appointment.appointment_time),
