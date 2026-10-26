@@ -24,16 +24,6 @@ ENV PORT=8080
 ENV NGINX_ENVSUBST_FILTER=^PORT$
 
 COPY --from=build /app/dist /usr/share/nginx/html
-
-RUN printf '%s\n' \
-    'server {' \
-    '  listen ${PORT};' \
-    '  server_name _;' \
-    '  root /usr/share/nginx/html;' \
-    '  index index.html;' \
-    '  location / {' \
-    '    try_files $uri $uri/ /index.html;' \
-    '  }' \
-    '}' > /etc/nginx/templates/default.conf.template
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 8080
