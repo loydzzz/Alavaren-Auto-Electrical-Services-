@@ -5131,7 +5131,7 @@ if (date.getDay() === 0) return null
     role="dialog"
     aria-modal="true"
     aria-labelledby="sunday-lock-title"
-    className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+className="fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4"
   >
     <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
 
@@ -5203,8 +5203,7 @@ if (date.getDay() === 0) return null
 ===================================================== */}
 
 {showBookingAgreement && !isAdmin && (
-  <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm sm:p-5">
-
+<div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4">
     <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
 
       {/* =================================================
@@ -5599,8 +5598,7 @@ const { error } = await supabase
       ===================================================== */}
 
       {showAttachmentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-md sm:p-5">
-
+<div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4">
           <div className="max-h-[95vh] w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl">
 
             {/* HEADER */}
@@ -6307,8 +6305,8 @@ const { error } = await supabase
 ===================================================== */}
 
 {showSuccess && (
-<div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-md sm:p-5">
-    <div
+<div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/70 px-3 py-4 sm:px-4">
+  <div
   className="
     mx-auto
     my-3

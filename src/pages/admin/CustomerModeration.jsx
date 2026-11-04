@@ -128,8 +128,10 @@ export default function CustomerModeration() {
           phone,
           role,
           created_at,
-                    avatar_url,
+          avatar_url,
+          avatar_uploaded_at,
           cover_url,
+          cover_type,
           registration_avatar_path,
           bio,
           birthday,
@@ -138,7 +140,8 @@ export default function CustomerModeration() {
           last_seen,
           booking_agreement_version,
           booking_agreement_accepted_at,
-          is_active
+          is_active,
+deactivated_at
         `)
         .order('created_at', {
           ascending: false,
@@ -242,15 +245,16 @@ export default function CustomerModeration() {
             )
           ) {
             appointmentStatusMap.set(
-              customerId,
-              {
-                pending: 0,
-                confirmed: 0,
-                in_progress: 0,
-                completed: 0,
-                cancelled: 0,
-              }
-            )
+  customerId,
+  {
+    pending: 0,
+    confirmed: 0,
+    in_progress: 0,
+    completed: 0,
+    cancelled: 0,
+    rejected: 0,
+  }
+)
           }
 
           const statusData =
@@ -311,18 +315,22 @@ export default function CustomerModeration() {
               ) || 0,
 
             appointmentStatuses:
-              appointmentStatusMap.get(
-                user.id
-              ) || {
-                pending: 0,
-                confirmed: 0,
-                in_progress: 0,
-                completed: 0,
-                cancelled: 0,
-              },
+  appointmentStatusMap.get(
+    user.id
+  ) || {
+    pending: 0,
+    confirmed: 0,
+    in_progress: 0,
+    completed: 0,
+    cancelled: 0,
+    rejected: 0,
+  },
 
             is_active:
-              user.is_active !== false,
+  user.is_active !== false,
+
+deactivatedAt:
+  user.deactivated_at || null,
           }
         }
       )
@@ -954,109 +962,118 @@ export default function CustomerModeration() {
   // ACCOUNT ACTIVE / DEACTIVATE
   // =========================================================
 
-  const handleToggleAccount =
-    async (user) => {
-      if (!user) {
+  
+  // =========================================================
+  // ACCOUNT ACTIVE / DEACTIVATE
+  // =========================================================
+
+  const handleToggleAccount = async (user) => {
+    if (!user) return
+
+    try {
+      const {
+        data: { user: currentAuthUser },
+        error: authError,
+      } = await supabase.auth.getUser()
+
+      if (authError) throw authError
+
+      // Prevent self-deactivation
+      if (
+        user.id === currentAuthUser?.id &&
+        user.is_active
+      ) {
+        toast.error(
+          'You cannot deactivate your own account.'
+        )
         return
       }
 
-      try {
-        const {
-          data: {
-            user: currentAuthUser,
-          },
-        } =
-          await supabase.auth.getUser()
+      const nextStatus = !user.is_active
 
-        // ================================================
-        // PREVENT SELF DEACTIVATION
-        // ================================================
+      const confirmed = window.confirm(
+        nextStatus
+          ? `Reactivate ${user.name}'s account?`
+          : `Deactivate ${user.name}'s account?`
+      )
 
-        if (
-          user.id ===
-            currentAuthUser?.id &&
-          user.is_active
-        ) {
-          toast.error(
-            'You cannot deactivate your own account.'
-          )
+      if (!confirmed) return
 
-          return
-        }
+      setProcessing(true)
 
-        const nextStatus =
-          !user.is_active
+      const { error } = await supabase
+        .from('users')
+        .update({
+          is_active: nextStatus,
+          deactivated_at: nextStatus
+            ? null
+            : new Date().toISOString(),
+        })
+        .eq('id', user.id)
 
-        const confirmed =
-          window.confirm(
-            nextStatus
-              ? `Reactivate ${user.name}'s account?`
-              : `Deactivate ${user.name}'s account?`
-          )
+      if (error) throw error
 
-        if (!confirmed) {
-          return
-        }
-
-        setProcessing(true)
-
-        const { error } =
+      // Preserve the existing technician reassignment logic
+      if (!nextStatus) {
+        const { error: appointmentError } =
           await supabase
-            .from('users')
+            .from('appointments')
             .update({
-              is_active:
-                nextStatus,
+              technician_id: null,
+              technician_role: null,
             })
-            .eq(
-              'id',
-              user.id
-            )
+            .eq('technician_id', user.id)
+            .in('status', ['pending', 'confirmed'])
 
-        if (error) {
-          throw error
+        if (appointmentError) {
+          console.error(
+            'Appointment reassignment error:',
+            appointmentError
+          )
+
+          toast.error(
+            'Account deactivated, but some appointments could not be unassigned.'
+          )
+
+          await loadCustomers()
+          return
         }
-        if (!nextStatus) {
-  await supabase
-    .from('appointments')
-    .update({ technician_id: null, technician_role: null })
-    .eq('technician_id', user.id)
-    .in('status', ['pending', 'confirmed'])
-}
-
-
-
-        toast.success(
-          nextStatus
-            ? 'Account reactivated successfully.'
-            : 'Account deactivated successfully.'
-        )
-
-        await loadCustomers()
-
-        setSelectedCustomer(
-          (current) =>
-            current
-              ? {
-                  ...current,
-                  is_active:
-                    nextStatus,
-                }
-              : current
-        )
-      } catch (error) {
-        console.error(
-          'Account status error:',
-          error
-        )
-
-        toast.error(
-          error?.message ||
-            'Unable to update account status.'
-        )
-      } finally {
-        setProcessing(false)
       }
+
+      toast.success(
+        nextStatus
+          ? 'Account reactivated successfully.'
+          : 'Account deactivated successfully.'
+      )
+
+      await loadCustomers()
+
+      setSelectedCustomer((current) =>
+        current
+          ? {
+              ...current,
+              is_active: nextStatus,
+              deactivatedAt: nextStatus
+                ? null
+                : new Date().toISOString(),
+            }
+          : current
+      )
+    } catch (error) {
+      console.error(
+        'Account status error:',
+        error
+      )
+
+      toast.error(
+        error?.message ||
+          'Unable to update account status.'
+      )
+    } finally {
+      setProcessing(false)
     }
+  }
+
 
   // =========================================================
   // LOAD MODERATION HISTORY
@@ -1806,103 +1823,43 @@ useEffect(() => {
 
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 
-            <StatCard
-              icon={<FaUsers />}
-              label="Total Users"
-              value={
-                statistics.totalUsers
-              }
-            />
+            <StatCard color="blue" icon={<FaUsers />} label="Total Users"
+              value={statistics.totalUsers} description="All registered accounts" />
 
-            <StatCard
-              icon={<FaUser />}
-              label="Customers"
-              value={
-                statistics.customersCount
-              }
-            />
+            <StatCard color="red" icon={<FaUser />} label="Customers"
+              value={statistics.customersCount} description="Customer accounts" />
 
-            <StatCard
-              icon={<FaUserCog />}
-              label="Technicians"
-              value={
-                statistics.techniciansCount
-              }
-            />
+            <StatCard color="orange" icon={<FaUserCog />} label="Technicians"
+              value={statistics.techniciansCount} description="Staff technician accounts" />
 
-            <StatCard
-              icon={<FaUserShield />}
-              label="Administrators"
-              value={
-                statistics.adminsCount
-              }
-            />
+            <StatCard color="violet" icon={<FaUserShield />} label="Administrators"
+              value={statistics.adminsCount} description="Admin accounts" />
 
-            <StatCard
-              icon={<FaUserPlus />}
-              label="New Today"
-              value={
-                statistics.newToday
-              }
-            />
+            <StatCard color="teal" icon={<FaUserPlus />} label="New Today"
+              value={statistics.newToday} description="Joined today" />
 
-            <StatCard
-              icon={<FaCalendarAlt />}
-              label="New This Week"
-              value={
-                statistics.newThisWeek
-              }
-            />
+            <StatCard color="sky" icon={<FaCalendarAlt />} label="New This Week"
+              value={statistics.newThisWeek} description="Joined this week" />
 
-            <StatCard
-              icon={<FaCalendarAlt />}
-              label="New This Month"
-              value={
-                statistics.newThisMonth
-              }
-            />
+            <StatCard color="indigo" icon={<FaCalendarAlt />} label="New This Month"
+              value={statistics.newThisMonth} description="Joined this month" />
 
-            <StatCard
-              icon={<FaUserClock />}
-              label="Active Recently"
-              value={
-                statistics.activeRecently
-              }
-            />
+            <StatCard color="emerald" icon={<FaUserClock />} label="Active Recently"
+              value={statistics.activeRecently} description="Seen in the last 7 days" />
 
-            <StatCard
-              icon={<FaCheckCircle />}
-              label="Healthy"
-              value={
-                statistics.healthy
-              }
-            />
+            <StatCard color="green" icon={<FaCheckCircle />} label="Healthy"
+              value={statistics.healthy} description="No moderation issues" />
 
-            <StatCard
-              icon={<FaExclamationTriangle />}
-              label="Warnings"
-              value={
-                statistics.warnings
-              }
-            />
+            <StatCard color="amber" icon={<FaExclamationTriangle />} label="Warnings"
+              value={statistics.warnings} description="Accounts with warnings" />
 
-            <StatCard
-              icon={<FaBan />}
-              label="Banned"
-              value={
-                statistics.banned
-              }
-            />
+            <StatCard color="rose" icon={<FaBan />} label="Banned"
+              value={statistics.banned} description="Restricted accounts" />
 
-            <StatCard
-              icon={<FaUserSlash />}
-              label="Deactivated"
-              value={
-                statistics.deactivated
-              }
-            />
+            <StatCard color="slate" icon={<FaUserSlash />} label="Deactivated"
+              value={statistics.deactivated} description="Disabled accounts" />
 
           </div>
 
@@ -2669,6 +2626,8 @@ useEffect(() => {
           />
         )}
 
+        
+
     </div>
   )
 }
@@ -2677,34 +2636,91 @@ useEffect(() => {
    STAT CARD
 ========================================================= */
 
+/* =========================================================
+   STAT CARD
+========================================================= */
+
+const STAT_COLORS = {
+  red:     { border: 'border-red-100',     label: 'text-red-600',     blob: 'bg-red-100/70',     icon: 'from-red-500 to-red-700',         bar: 'bg-red-600',     glow: 'shadow-red-300/50' },
+  rose:    { border: 'border-rose-100',    label: 'text-rose-600',    blob: 'bg-rose-100/70',    icon: 'from-rose-500 to-rose-700',       bar: 'bg-rose-600',    glow: 'shadow-rose-300/50' },
+  blue:    { border: 'border-blue-100',    label: 'text-blue-600',    blob: 'bg-blue-100/70',    icon: 'from-blue-500 to-blue-700',       bar: 'bg-blue-600',    glow: 'shadow-blue-300/50' },
+  indigo:  { border: 'border-indigo-100',  label: 'text-indigo-600',  blob: 'bg-indigo-100/70',  icon: 'from-indigo-500 to-indigo-700',   bar: 'bg-indigo-600',  glow: 'shadow-indigo-300/50' },
+  sky:     { border: 'border-sky-100',     label: 'text-sky-600',     blob: 'bg-sky-100/70',     icon: 'from-sky-400 to-sky-600',         bar: 'bg-sky-500',     glow: 'shadow-sky-300/50' },
+  orange:  { border: 'border-orange-100',  label: 'text-orange-600',  blob: 'bg-orange-100/70',  icon: 'from-orange-400 to-orange-600',   bar: 'bg-orange-500',  glow: 'shadow-orange-300/50' },
+  amber:   { border: 'border-amber-100',   label: 'text-amber-600',   blob: 'bg-amber-100/70',   icon: 'from-amber-400 to-amber-600',     bar: 'bg-amber-500',   glow: 'shadow-amber-300/50' },
+  violet:  { border: 'border-violet-100',  label: 'text-violet-600',  blob: 'bg-violet-100/70',  icon: 'from-violet-500 to-violet-700',   bar: 'bg-violet-600',  glow: 'shadow-violet-300/50' },
+  green:   { border: 'border-green-100',   label: 'text-green-600',   blob: 'bg-green-100/70',   icon: 'from-green-500 to-green-700',     bar: 'bg-green-600',   glow: 'shadow-green-300/50' },
+  emerald: { border: 'border-emerald-100', label: 'text-emerald-600', blob: 'bg-emerald-100/70', icon: 'from-emerald-500 to-emerald-700', bar: 'bg-emerald-600', glow: 'shadow-emerald-300/50' },
+  teal:    { border: 'border-teal-100',    label: 'text-teal-600',    blob: 'bg-teal-100/70',    icon: 'from-teal-400 to-teal-600',       bar: 'bg-teal-500',    glow: 'shadow-teal-300/50' },
+  slate:   { border: 'border-slate-200',   label: 'text-slate-600',   blob: 'bg-slate-100',      icon: 'from-slate-500 to-slate-700',     bar: 'bg-slate-500',   glow: 'shadow-slate-300/50' },
+}
+
 function StatCard({
   icon,
   label,
   value,
+  description,
+  color = 'red',
 }) {
+  const c = STAT_COLORS[color] || STAT_COLORS.red
+
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+    <div
+      className={`
+        group relative overflow-hidden rounded-2xl border bg-white
+        p-4 pb-5 shadow-sm transition
+        hover:-translate-y-0.5 hover:shadow-lg
+        sm:p-5 sm:pb-6
+        ${c.border}
+      `}
+    >
+      {/* corner blob */}
+      <div
+        className={`absolute -right-7 -top-7 h-24 w-24 rounded-full transition-transform duration-300 group-hover:scale-110 ${c.blob}`}
+      />
 
-      <div className="flex items-center justify-between gap-3">
-
-        <div>
-
-          <p className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400">
-            {label}
-          </p>
-
-          <p className="mt-1 text-2xl font-black text-gray-900">
-            {value}
-          </p>
-
-        </div>
-
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-700">
-          {icon}
-        </div>
-
+      {/* icon tile */}
+      <div
+        className={`absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-lg text-white shadow-lg ${c.icon} ${c.glow}`}
+      >
+        {icon}
       </div>
 
+      {/* text */}
+      <div className="relative pr-12">
+        <p className={`text-[10px] font-black uppercase tracking-[0.18em] ${c.label}`}>
+          {label}
+        </p>
+
+        <p className="mt-2 text-3xl font-black leading-none text-gray-900">
+          {value}
+        </p>
+
+        <p className="mt-2 text-xs font-medium text-gray-400">
+          {description}
+        </p>
+      </div>
+
+      {/* bottom accent bar */}
+      <div
+        className={`absolute bottom-0 left-0 h-1 w-16 rounded-tr-full ${c.bar}`}
+      />
+    </div>
+  )
+}
+
+function SectionCard({ theme, icon, title, children }) {
+  return (
+    <div className={`relative mt-4 overflow-hidden rounded-2xl border bg-gradient-to-br p-4 ${theme.border} ${theme.soft}`}>
+
+      <div className="relative flex items-center gap-2 text-sm font-black text-gray-800">
+        <span className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br text-xs text-white shadow ${theme.tile} ${theme.glow}`}>
+          {icon}
+        </span>
+        {title}
+      </div>
+
+      <div className="relative">{children}</div>
     </div>
   )
 }
@@ -2844,6 +2860,8 @@ function UserTableRow({
 
       </td>
 
+      
+
       {/* CONTACT */}
 
       <td className="px-4 py-4">
@@ -2942,6 +2960,8 @@ function UserTableRow({
         </div>
 
       </td>
+
+
 
       {/* STATUS */}
 
@@ -3065,6 +3085,7 @@ function UserTableRow({
                   <FaExclamationTriangle />
                 </ActionButton>
               )}
+              
 
               {user.moderationStatus !==
                 'banned' && (
@@ -3513,6 +3534,75 @@ function Avatar({
 }
 
 /* =========================================================
+   GLASS AVATAR (profile modal)
+========================================================= */
+
+function GlassAvatar({ user }) {
+  return (
+    <div
+      className="
+                relative shrink-0
+        h-20 w-20
+        sm:h-24 sm:w-24
+        rounded-full
+        border-2 border-sky-300/70
+        bg-white/60
+        p-1.5
+        shadow-[0_8px_24px_rgba(0,0,0,0.18)]
+        backdrop-blur-md
+      "
+    >
+      <div className="h-full w-full overflow-hidden rounded-full bg-red-50">
+        {user.avatar_url ? (
+          <img
+            src={user.avatar_url}
+            alt={user.name || 'User'}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-red-300">
+            <FaUser className="text-2xl sm:text-3xl" />
+          </div>
+        )}
+      </div>
+
+      {/* glass shine */}
+      <div className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-br from-white/40 via-transparent to-transparent" />
+    </div>
+  )
+}
+
+function CoverBanner({ user }) {
+    const theme = ROLE_THEME[user.role] || ROLE_THEME.customer
+  const url = user.cover_url
+
+  const isVideo =
+    user.cover_type === 'video' ||
+    (!user.cover_type &&
+      /\.(mp4|webm|mov|m4v)(\?.*)?$/i.test(url || ''))
+
+  return (
+    <div className={`absolute inset-0 bg-gradient-to-r ${theme.cover}`}>      {url &&
+        (isVideo ? (
+          <video
+            src={url}
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <img
+            src={url}
+            alt="Cover"
+            className="h-full w-full object-cover"
+          />
+        ))}
+    </div>
+  )
+}
+/* =========================================================
    ROLE BADGE
 ========================================================= */
 
@@ -3571,6 +3661,70 @@ function RoleBadge({
       {current.icon}
       {current.label}
     </span>
+  )
+}
+
+/* =========================================================
+   ROLE CONFIG + MINI BADGE + MINI TILE
+========================================================= */
+
+const ROLE_UI = {
+  customer: {
+    label: 'Customer',
+    short: 'CUSTOMER',
+    icon: FaUser,
+    text: 'text-red-700',        // changed
+    bg: 'bg-red-50',             // changed
+    tile: 'from-blue-400/80 to-blue-600/80',
+  },
+  technician: {
+    label: 'Technician',
+    short: 'TECH',
+    icon: FaWrench,
+    text: 'text-orange-700',     // changed
+    bg: 'bg-orange-50',          // changed
+    tile: 'from-amber-400/80 to-orange-500/80',
+  },
+  admin: {
+    label: 'Admin',
+    short: 'ADMIN',
+    icon: FaUserShield,
+    text: 'text-violet-700',     // changed
+    bg: 'bg-violet-50',          // changed
+    tile: 'from-purple-400/80 to-fuchsia-600/80',
+  },
+}
+
+function MiniRoleBadge({ role }) {
+  const cfg = ROLE_UI[role] || ROLE_UI.customer
+  const Icon = cfg.icon
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-extrabold ${cfg.bg} ${cfg.text}`}
+    >
+      <Icon className="text-[8px]" />
+      {cfg.label}
+    </span>
+  )
+}
+
+function RoleTile({ role }) {
+  const cfg = ROLE_UI[role] || ROLE_UI.customer
+  const Icon = cfg.icon
+
+  return (
+    <div className="flex flex-col items-center">
+      <div
+        className={`flex h-12 w-12 items-center justify-center rounded-2xl border border-white/50 bg-gradient-to-br ${cfg.tile} text-lg text-white shadow-lg backdrop-blur-md sm:h-14 sm:w-14 sm:text-xl`}
+      >
+        <Icon />
+      </div>
+
+      <span className="-mt-2 rounded-full bg-white px-2.5 py-0.5 text-[8px] font-black tracking-[0.2em] text-slate-600 shadow">
+        {cfg.short}
+      </span>
+    </div>
   )
 }
 
@@ -3792,7 +3946,45 @@ function MobileInfo({
     </div>
   )
 }
+/* =========================================================
+   ROLE THEME (profile modal colors)
+========================================================= */
 
+const ROLE_THEME = {
+  customer: {
+    header: 'from-red-600 via-red-700 to-red-900',
+    cover: 'from-red-700 via-red-600 to-red-800',
+    accent: 'text-red-600',
+    border: 'border-red-100',
+    blob: 'bg-red-100/70',
+    tile: 'from-red-500 to-red-700',
+    glow: 'shadow-red-300/50',
+    bar: 'bg-red-600',
+    soft: 'from-red-50/80 to-white',
+  },
+  technician: {
+    header: 'from-orange-400 via-orange-500 to-orange-700',
+    cover: 'from-orange-500 via-orange-400 to-orange-600',
+    accent: 'text-orange-600',
+    border: 'border-orange-100',
+    blob: 'bg-orange-100/70',
+    tile: 'from-orange-400 to-orange-600',
+    glow: 'shadow-orange-300/50',
+    bar: 'bg-orange-500',
+    soft: 'from-orange-50/80 to-white',
+  },
+  admin: {
+    header: 'from-violet-600 via-violet-700 to-violet-900',
+    cover: 'from-violet-700 via-violet-600 to-violet-800',
+    accent: 'text-violet-600',
+    border: 'border-violet-100',
+    blob: 'bg-violet-100/70',
+    tile: 'from-violet-500 to-violet-700',
+    glow: 'shadow-violet-300/50',
+    bar: 'bg-violet-600',
+    soft: 'from-violet-50/80 to-white',
+  },
+}
 /* =========================================================
    PROFILE MODAL
 ========================================================= */
@@ -3806,6 +3998,7 @@ function ProfileModal({
   formatDateOnly,
   getAccountAgeLabel,
 }) {
+    const theme = ROLE_THEME[user.role] || ROLE_THEME.customer
   return (
     <div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">
 
@@ -3813,96 +4006,96 @@ function ProfileModal({
 
         {/* HEADER */}
 
-        <div className="flex items-center justify-between bg-gradient-to-r from-red-700 to-red-800 px-5 py-4 text-white sm:px-7">
+<div className={`relative flex items-center justify-between overflow-hidden bg-gradient-to-r ${theme.header} px-5 py-4 text-white sm:px-7`}>
+  <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-white/10" />
+  <div className="pointer-events-none absolute -bottom-12 right-28 h-24 w-24 rounded-full bg-white/5" />
 
-          <div className="flex items-center gap-3">
+  <div className="relative flex items-center gap-3">
+   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 text-sm shadow-md ring-1 ring-white/30 backdrop-blur">
+  <FaIdBadge />
+</div>
+    <div>
+      <h2 className="text-lg font-black">User Profile</h2>
+      <p className="text-[11px] text-white/80">Complete account information</p>
+    </div>
+  </div>
 
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
-              <FaIdBadge />
-            </div>
+  <button type="button" onClick={onClose} className="relative rounded-xl p-2 transition hover:bg-white/10">
+    <FaTimes />
+  </button>
+</div>
 
-            <div>
-
-              <h2 className="text-lg font-black">
-                User Profile
-              </h2>
-
-              <p className="text-[11px] text-red-100">
-                Complete account information
-              </p>
-
-            </div>
-
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 transition hover:bg-white/10"
-          >
-            <FaTimes />
-          </button>
-
-        </div>
+        
 
         {/* CONTENT */}
 
         <div className="overflow-y-auto p-5 sm:p-7">
 
-          {/* PROFILE TOP */}
+                             {/* COVER + GLASS PROFILE CARD */}
 
-          <div className="flex flex-col items-center gap-4 border-b border-gray-100 pb-6 sm:flex-row sm:items-start">
+          <div className="-mx-5 -mt-5 sm:-mx-7 sm:-mt-7">
 
-            <Avatar
-              user={user}
-              size="lg"
-            />
+            {/* cover (taller so more of the photo shows) */}
+            <div className="relative h-44 overflow-hidden sm:h-56">
+              
 
-            <div className="min-w-0 flex-1 text-center sm:text-left">
+              <CoverBanner user={user} />
 
-              <h3 className="break-words text-2xl font-black text-gray-900">
-                {user.name ||
-                  'Unnamed User'}
-              </h3>
-
-              <p className="mt-1 break-all text-sm text-gray-500">
-                @{user.username ||
-                  'no username'}
-              </p>
-
-              <div className="mt-3 flex flex-wrap justify-center gap-2 sm:justify-start">
-
-                <RoleBadge
-                  role={user.role}
-                />
-
+              <div className="absolute left-0 top-0 p-3 sm:p-4">
                 <span
                   className={`
-                    inline-flex
-                    items-center
-                    gap-1.5
-                    rounded-full
-                    px-3
-                    py-1
-                    text-[10px]
-                    font-extrabold
-                    ${
-                      user.is_active
-                        ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-gray-100 text-gray-500'
-                    }
+                    inline-flex items-center gap-1.5 rounded-full border border-white/50 bg-white/80 px-3 py-1
+                    text-[10px] font-extrabold backdrop-blur-md
+                    ${user.is_active ? 'text-emerald-700' : 'text-gray-500'}
                   `}
                 >
-                  {user.is_active ? (
-                    <FaCheckCircle />
-                  ) : (
-                    <FaUserSlash />
+                  {user.is_active ? <FaCheckCircle /> : <FaUserSlash />}
+                  {user.is_active ? 'Active Account' : 'Deactivated'}
+                </span>
+              </div>
+
+            </div>
+
+            {/* compact glass card, overlaps the cover only slightly */}
+            <div className="relative -mt-10 px-3 sm:-mt-12 sm:px-5">
+
+              <div
+                className="
+                  flex flex-col items-center gap-3
+                  rounded-2xl border border-white/70
+                  bg-gradient-to-b from-white/5 via-white/10 to-white
+                  p-3 shadow-xl backdrop-blur-xl
+                  sm:flex-row sm:gap-4 sm:p-4
+                "
+              >
+
+                <GlassAvatar user={user} />
+
+                <div className="min-w-0 flex-1 text-center sm:text-left">
+
+                  <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+
+                    <h3 className="break-words text-lg font-black text-gray-900 sm:text-xl">
+                      {user.name || 'Unnamed User'}
+                    </h3>
+
+                    <MiniRoleBadge role={user.role} />
+
+                  </div>
+
+                  <p className="mt-0.5 break-all text-sm font-medium text-gray-500">
+                    @{user.username || 'no username'}
+                  </p>
+
+                  {user.avatar_uploaded_at && (
+                    <p className="mt-0.5 text-[11px] font-semibold text-gray-400">
+                      Photo updated {formatDateTime(user.avatar_uploaded_at)}
+                    </p>
                   )}
 
-                  {user.is_active
-                    ? 'Active Account'
-                    : 'Deactivated'}
-                </span>
+                </div>
+
+                
 
               </div>
 
@@ -3910,31 +4103,50 @@ function ProfileModal({
 
           </div>
 
+          <div className="mt-6" />
+
+
+
+          {/* ACCOUNT DEACTIVATION DATE AND TIME */}
+
+          {!user.is_active && (
+            <div className="mb-4 rounded-xl border border-red-100 bg-red-50 p-4">
+              <div className="flex items-center gap-2">
+                <FaClock className="text-red-600" />
+
+                <p className="text-xs font-extrabold uppercase tracking-wide text-red-600">
+                  Account Deactivated
+                </p>
+              </div>
+
+              <p className="mt-2 text-sm font-bold text-gray-900">
+                {formatDateTime(user.deactivatedAt)}
+              </p>
+            </div>
+          )}
+
+
+
+
           {/* INFORMATION */}
 
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
 
-            <ProfileInfo
-              icon={
-                <FaEnvelope />
-              }
+                        <ProfileInfo
+              icon={<FaEnvelope />}
               label="Email"
-              value={
-                user.email
-              }
+              value={user.email}
+              theme={theme}
             />
 
-            <ProfileInfo
-              icon={
-                <FaPhone />
-              }
-              label="Phone"
-              value={
-                user.phone
-              }
+                        <ProfileInfo
+                icon={<FaPhone />}
+                label="Phone"
+              value={user.phone}
+              theme={theme}
             />
 
-            <ProfileInfo
+                        <ProfileInfo
               icon={
                 <FaBirthdayCake />
               }
@@ -3942,9 +4154,10 @@ function ProfileModal({
               value={formatDateOnly(
                 user.birthday
               )}
+              theme={theme}
             />
 
-            <ProfileInfo
+                        <ProfileInfo
               icon={
                 <FaVenusMars />
               }
@@ -3953,20 +4166,11 @@ function ProfileModal({
                 user.gender ||
                 'Not provided'
               }
+              theme={theme}
             />
 
-            <ProfileInfo
-              icon={
-                <FaMapMarkerAlt />
-              }
-              label="Address"
-              value={
-                user.address ||
-                'Not provided'
-              }
-            />
-
-            <ProfileInfo
+                      
+                        <ProfileInfo
               icon={
                 <FaCalendarAlt />
               }
@@ -3974,9 +4178,10 @@ function ProfileModal({
               value={formatDateTime(
                 user.created_at
               )}
+              theme={theme}
             />
 
-            <ProfileInfo
+                        <ProfileInfo
               icon={
                 <FaClock />
               }
@@ -3988,9 +4193,10 @@ function ProfileModal({
                     )
                   : 'Never active'
               }
+              theme={theme}
             />
 
-            <ProfileInfo
+                        <ProfileInfo
               icon={
                 <FaUserClock />
               }
@@ -3998,28 +4204,31 @@ function ProfileModal({
               value={getAccountAgeLabel(
                 user.created_at
               )}
+              theme={theme}
             />
 
           </div>
 
           {/* BIO */}
 
-          <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+{/* BIO */}
+<div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+  <div className="flex items-center gap-2 text-sm font-black text-gray-800">
+    <FaUser className={theme.accent} />
+    Bio
+  </div>
 
-            <div className="flex items-center gap-2 text-sm font-black text-gray-800">
+  <div className={`relative mt-3 overflow-hidden rounded-xl border bg-white p-3 pb-4 shadow-sm ${theme.border}`}>
+    <p className={`mb-1 text-[9px] font-black uppercase tracking-[0.16em] ${theme.accent}`}>
+      About
+    </p>
+    <p className="relative whitespace-pre-wrap text-sm leading-6 text-gray-600">
+      {user.bio || 'No bio provided.'}
+    </p>
 
-              <FaUser className="text-red-600" />
-
-              Bio
-
-            </div>
-
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600">
-              {user.bio ||
-                'No bio provided.'}
-            </p>
-
-          </div>
+    <div className={`absolute bottom-0 right-0 h-1 w-20 rounded-tl-full ${theme.bar}`} />
+  </div>
+</div>
 
           {/* BOOKING AGREEMENT */}
 
@@ -4027,15 +4236,14 @@ function ProfileModal({
 
             <div className="flex items-center gap-2 text-sm font-black text-gray-800">
 
-              <FaFileSignature className="text-red-600" />
-
+              <FaFileSignature className={theme.accent} />
               Booking Agreement
 
             </div>
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
 
-              <ProfileInfo
+                            <ProfileInfo
                 icon={
                   <FaFileSignature />
                 }
@@ -4044,9 +4252,9 @@ function ProfileModal({
                   user.booking_agreement_version ||
                   'Not accepted'
                 }
+                theme={theme}
               />
-
-              <ProfileInfo
+                            <ProfileInfo
                 icon={
                   <FaCalendarAlt />
                 }
@@ -4058,7 +4266,7 @@ function ProfileModal({
                       )
                     : 'Not accepted'
                 }
-              />
+              theme={theme}              />
 
             </div>
 
@@ -4081,52 +4289,44 @@ function ProfileModal({
 
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
 
-                  <MiniStat
-                    label="Total"
-                    value={
-                      user.appointmentCount
-                    }
-                  />
+  <MiniStat
+    label="Total"
+    value={user.appointmentCount}
+  />
 
-                  <MiniStat
-                    label="Pending"
-                    value={
-                      user
-                        .appointmentStatuses
-                        ?.pending || 0
-                    }
-                  />
+  <MiniStat
+    label="Pending"
+    value={user.appointmentStatuses?.pending || 0}
+  />
 
-                  <MiniStat
-                    label="Confirmed"
-                    value={
-                      user
-                        .appointmentStatuses
-                        ?.confirmed || 0
-                    }
-                  />
+  <MiniStat
+    label="Confirmed"
+    value={user.appointmentStatuses?.confirmed || 0}
+  />
 
-                  <MiniStat
-                    label="Completed"
-                    value={
-                      user
-                        .appointmentStatuses
-                        ?.completed || 0
-                    }
-                  />
+  <MiniStat
+    label="In Progress"
+    value={user.appointmentStatuses?.in_progress || 0}
+  />
 
-                  <MiniStat
-                    label="Cancelled"
-                    value={
-                      user
-                        .appointmentStatuses
-                        ?.cancelled || 0
-                    }
-                  />
+  <MiniStat
+    label="Completed"
+    value={user.appointmentStatuses?.completed || 0}
+  />
 
-                </div>
+  <MiniStat
+    label="Cancelled"
+    value={user.appointmentStatuses?.cancelled || 0}
+  />
+
+  <MiniStat
+    label="Rejected"
+    value={user.appointmentStatuses?.rejected || 0}
+  />
+
+</div>
 
               </div>
 
@@ -4278,28 +4478,26 @@ function ProfileModal({
    PROFILE INFO
 ========================================================= */
 
-function ProfileInfo({
-  icon,
-  label,
-  value,
-}) {
+function ProfileInfo({ icon, label, value, theme = ROLE_THEME.customer }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+    <div className={`relative overflow-hidden rounded-xl border bg-white p-3 pb-4 shadow-sm ${theme.border}`}>
 
-      <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-wider text-gray-400">
-
-        <span className="text-red-600">
+      <div className="relative flex items-start gap-3">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-sm text-white shadow-md ${theme.tile} ${theme.glow}`}>
           {icon}
-        </span>
+        </div>
 
-        {label}
-
+        <div className="min-w-0">
+          <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${theme.accent}`}>
+            {label}
+          </p>
+          <p className="mt-1 break-words text-sm font-bold text-gray-800">
+            {value || 'Not provided'}
+          </p>
+        </div>
       </div>
 
-      <p className="mt-2 break-words text-sm font-bold text-gray-800">
-        {value || 'Not provided'}
-      </p>
-
+<div className={`absolute bottom-0 right-0 h-1 w-20 rounded-tl-full ${theme.bar}`} />
     </div>
   )
 }
@@ -4308,134 +4506,120 @@ function ProfileInfo({
    MINI STAT
 ========================================================= */
 
-function MiniStat({
-  label,
-  value,
-}) {
-  return (
-    <div className="rounded-xl border border-gray-100 bg-white p-3 text-center">
+const MINI_STAT_BAR = {
+  total: 'bg-blue-500',
+  pending: 'bg-amber-500',
+  confirmed: 'bg-sky-500',
+  'in progress': 'bg-indigo-500',
+  completed: 'bg-emerald-500',
+  cancelled: 'bg-orange-500',
+  rejected: 'bg-rose-700',
+}
 
-      <p className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400">
+function MiniStat({ label, value }) {
+  const bar =
+    MINI_STAT_BAR[label?.toLowerCase()] || 'bg-gray-400'
+
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-white px-1.5 py-3 text-center">
+
+      <p className="whitespace-nowrap text-[8px] font-extrabold uppercase tracking-tight text-gray-400">
         {label}
       </p>
 
-      <p className="mt-1 text-sm font-black capitalize text-gray-800">
+      <p className="mt-1 text-sm font-black text-gray-800">
         {value}
       </p>
+
+      <div className={`mx-auto mt-2 h-1 w-8 rounded-full ${bar}`} />
 
     </div>
   )
 }
-
 /* =========================================================
    MODERATION MODAL
 ========================================================= */
 
-function ModerationModal({
-  type,
-  title,
-  icon,
-  user,
-  reason,
-  setReason,
-  adminNotes,
-  setAdminNotes,
-  processing,
-  onClose,
-  onSubmit,
-}) {
-  const isWarning =
-    type === 'warning'
+const MOD_THEME = {
+  warning: {
+    header: 'from-amber-400 via-amber-500 to-amber-700',
+    border: 'border-amber-100',
+    soft: 'from-amber-50/80 to-white',
+    blob: 'bg-amber-100/70',
+    focus: 'focus:border-amber-500 focus:ring-amber-50',
+    button: 'from-amber-500 to-amber-700 hover:from-amber-600 hover:to-amber-800 shadow-amber-300/50',
+  },
+  ban: {
+    header: 'from-red-600 via-red-700 to-red-900',
+    border: 'border-red-100',
+    soft: 'from-red-50/80 to-white',
+    blob: 'bg-red-100/70',
+    focus: 'focus:border-red-500 focus:ring-red-50',
+    button: 'from-red-600 to-red-800 hover:from-red-700 hover:to-red-900 shadow-red-300/50',
+  },
+  unban: {
+    header: 'from-emerald-400 via-emerald-500 to-emerald-700',
+    border: 'border-emerald-100',
+    soft: 'from-emerald-50/80 to-white',
+    blob: 'bg-emerald-100/70',
+    focus: 'focus:border-emerald-500 focus:ring-emerald-50',
+    button: 'from-emerald-500 to-emerald-700 hover:from-emerald-600 hover:to-emerald-800 shadow-emerald-300/50',
+  },
+}
 
-  const isBan =
-    type === 'ban'
+function ModerationModal({
+  type, title, icon, user,
+  reason, setReason, adminNotes, setAdminNotes,
+  processing, onClose, onSubmit,
+}) {
+  const isWarning = type === 'warning'
+  const isBan = type === 'ban'
+  const t = MOD_THEME[type] || MOD_THEME.unban
+
+  const textareaClass = `w-full resize-none rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-none transition focus:ring-4 ${t.focus}`
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-end justify-center overscroll-contain bg-slate-950/70 p-0 sm:items-center sm:p-4">
+      <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl">
 
-  <div className="flex max-h-[95dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl">
         {/* HEADER */}
+        <div className={`relative flex items-center justify-between overflow-hidden bg-gradient-to-r ${t.header} px-5 py-4 text-white`}>
+          <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-white/10" />
+          <div className="pointer-events-none absolute -bottom-12 right-24 h-24 w-24 rounded-full bg-white/5" />
 
-        <div
-          className={`
-            flex
-            items-center
-            justify-between
-            px-5
-            py-4
-            text-white
-            ${
-              isWarning
-                ? 'bg-amber-600'
-                : isBan
-                  ? 'bg-red-700'
-                  : 'bg-emerald-600'
-            }
-          `}
-        >
-
-          <div className="flex items-center gap-3">
-
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
+          <div className="relative flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 shadow-lg ring-1 ring-white/30 backdrop-blur">
               {icon}
             </div>
-
             <div>
-
-              <h2 className="text-lg font-black">
-                {title}
-              </h2>
-
-              <p className="text-[11px] text-white/80">
-                {user.name}
-              </p>
-
+              <h2 className="text-lg font-black">{title}</h2>
+              <p className="text-[11px] text-white/80">{user.name}</p>
             </div>
-
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 transition hover:bg-white/10"
-          >
+          <button type="button" onClick={onClose} className="relative rounded-xl p-2 transition hover:bg-white/10">
             <FaTimes />
           </button>
-
         </div>
 
         {/* BODY */}
-
-<div className="space-y-4 overflow-y-auto p-5">
-          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-
-            <p className="text-xs leading-5 text-gray-600">
-
+        <div className="space-y-4 overflow-y-auto p-5">
+          <div className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br p-4 ${t.border} ${t.soft}`}>
+            <div className={`absolute -right-6 -top-6 h-16 w-16 rounded-full ${t.blob}`} />
+            <p className="relative text-xs leading-5 text-gray-600">
               {isWarning
                 ? 'Issue a formal warning to this customer. Warnings are tracked and may contribute toward the account warning threshold.'
                 : isBan
                   ? 'Ban this customer account. The existing moderation system will record the action and reason.'
                   : 'Restore access to this previously banned customer account.'}
-
             </p>
-
           </div>
 
-          {/* REASON */}
-
           <div>
-
-            <label className="mb-2 block text-xs font-extrabold uppercase tracking-wide text-gray-600">
-              Reason
-            </label>
-
+            <label className="mb-2 block text-xs font-extrabold uppercase tracking-wide text-gray-600">Reason</label>
             <textarea
               value={reason}
-              onChange={(e) =>
-                setReason(
-                  e.target.value
-                )
-              }
+              onChange={(e) => setReason(e.target.value)}
               rows={4}
               placeholder={
                 isWarning
@@ -4444,129 +4628,41 @@ function ModerationModal({
                     ? 'Enter the reason for banning this account...'
                     : 'Enter the reason for restoring this account...'
               }
-              className="
-                w-full
-                resize-none
-                rounded-2xl
-                border
-                border-gray-200
-                bg-white
-                px-4
-                py-3
-                text-sm
-                text-gray-800
-                outline-none
-                transition
-                focus:border-red-500
-                focus:ring-4
-                focus:ring-red-50
-              "
+              className={textareaClass}
             />
-
           </div>
-
-          {/* ADMIN NOTES */}
 
           <div>
-
             <label className="mb-2 block text-xs font-extrabold uppercase tracking-wide text-gray-600">
               Admin Notes
-              <span className="ml-1 font-medium normal-case text-gray-400">
-                Optional
-              </span>
+              <span className="ml-1 font-medium normal-case text-gray-400">Optional</span>
             </label>
-
             <textarea
-              value={
-                adminNotes
-              }
-              onChange={(e) =>
-                setAdminNotes(
-                  e.target.value
-                )
-              }
+              value={adminNotes}
+              onChange={(e) => setAdminNotes(e.target.value)}
               rows={3}
               placeholder="Add internal notes if needed..."
-              className="
-                w-full
-                resize-none
-                rounded-2xl
-                border
-                border-gray-200
-                bg-white
-                px-4
-                py-3
-                text-sm
-                text-gray-800
-                outline-none
-                transition
-                focus:border-red-500
-                focus:ring-4
-                focus:ring-red-50
-              "
+              className={textareaClass}
             />
-
           </div>
-
         </div>
 
         {/* FOOTER */}
-
         <div className="flex flex-col-reverse gap-2 border-t border-gray-100 bg-gray-50 p-4 sm:flex-row sm:justify-end">
-
           <button
             type="button"
-            disabled={
-              processing
-            }
-            onClick={
-              onClose
-            }
-            className="
-              rounded-xl
-              border
-              border-gray-200
-              bg-white
-              px-5
-              py-3
-              text-sm
-              font-bold
-              text-gray-700
-              transition
-              hover:bg-gray-100
-              disabled:opacity-50
-            "
+            disabled={processing}
+            onClick={onClose}
+            className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-700 transition hover:bg-gray-100 disabled:opacity-50"
           >
             Cancel
           </button>
 
           <button
             type="button"
-            disabled={
-              processing ||
-              !reason.trim()
-            }
-            onClick={
-              onSubmit
-            }
-            className={`
-              rounded-xl
-              px-5
-              py-3
-              text-sm
-              font-bold
-              text-white
-              transition
-              disabled:cursor-not-allowed
-              disabled:opacity-50
-              ${
-                isWarning
-                  ? 'bg-amber-600 hover:bg-amber-700'
-                  : isBan
-                    ? 'bg-red-700 hover:bg-red-800'
-                    : 'bg-emerald-600 hover:bg-emerald-700'
-              }
-            `}
+            disabled={processing || !reason.trim()}
+            onClick={onSubmit}
+            className={`rounded-xl bg-gradient-to-r px-5 py-3 text-sm font-bold text-white shadow-lg transition disabled:cursor-not-allowed disabled:opacity-50 ${t.button}`}
           >
             {processing
               ? 'Processing...'
@@ -4576,11 +4672,8 @@ function ModerationModal({
                   ? 'Ban Account'
                   : 'Unban Account'}
           </button>
-
         </div>
-
       </div>
-
     </div>
   )
 }
@@ -4605,37 +4698,25 @@ function HistoryModal({
 
         {/* HEADER */}
 
-        <div className="flex items-center justify-between bg-gray-900 px-5 py-4 text-white sm:px-6">
+        <div className="relative flex items-center justify-between overflow-hidden bg-gradient-to-r from-slate-700 via-slate-800 to-slate-950 px-5 py-4 text-white sm:px-6">
+  <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-white/10" />
 
-          <div className="flex items-center gap-3">
+  <div className="relative flex items-center gap-3">
+    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 shadow-lg ring-1 ring-white/30 backdrop-blur">
+      <FaHistory />
+    </div>
+    <div>
+      <h2 className="text-lg font-black">Moderation History</h2>
+      <p className="text-[11px] text-gray-300">{user.name}</p>
+    </div>
+  </div>
 
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
-              <FaHistory />
-            </div>
+  <button type="button" onClick={onClose} className="relative rounded-xl p-2 transition hover:bg-white/10">
+    <FaTimes />
+  </button>
+</div>
 
-            <div>
 
-              <h2 className="text-lg font-black">
-                Moderation History
-              </h2>
-
-              <p className="text-[11px] text-gray-300">
-                {user.name}
-              </p>
-
-            </div>
-
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 transition hover:bg-white/10"
-          >
-            <FaTimes />
-          </button>
-
-        </div>
 
         {/* CONTENT */}
 
@@ -4723,111 +4804,56 @@ function HistoryModal({
    HISTORY ITEM
 ========================================================= */
 
-function HistoryItem({
-  item,
-  formatDateTime,
-  processing,
-  onDelete,
-}) {
-  const isBan =
-    item.action_type ===
-    'ban'
+function HistoryItem({ item, formatDateTime, processing, onDelete }) {
+  const isBan = item.action_type === 'ban'
+  const isWarning = item.action_type === 'warning'
+  const isUnban = item.action_type === 'unban'
 
-  const isWarning =
-    item.action_type ===
-    'warning'
-
-  const isUnban =
-    item.action_type ===
-    'unban'
+  const tone = isBan
+    ? { border: 'border-red-100', soft: 'from-red-50/70 to-white', blob: 'bg-red-100/70', tile: 'from-red-500 to-red-700', glow: 'shadow-red-300/50', bar: 'bg-red-600', text: 'text-red-600' }
+    : isWarning
+      ? { border: 'border-amber-100', soft: 'from-amber-50/70 to-white', blob: 'bg-amber-100/70', tile: 'from-amber-400 to-amber-600', glow: 'shadow-amber-300/50', bar: 'bg-amber-500', text: 'text-amber-600' }
+      : isUnban
+        ? { border: 'border-emerald-100', soft: 'from-emerald-50/70 to-white', blob: 'bg-emerald-100/70', tile: 'from-emerald-500 to-emerald-700', glow: 'shadow-emerald-300/50', bar: 'bg-emerald-600', text: 'text-emerald-600' }
+        : { border: 'border-slate-200', soft: 'from-slate-50 to-white', blob: 'bg-slate-100', tile: 'from-slate-500 to-slate-700', glow: 'shadow-slate-300/50', bar: 'bg-slate-500', text: 'text-slate-600' }
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+    <div className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br p-4 pb-5 ${tone.border} ${tone.soft}`}>
+      <div className={`absolute -right-7 -top-7 h-20 w-20 rounded-full ${tone.blob}`} />
 
-      <div className="flex items-start gap-3">
-
-        <div
-          className={`
-            flex
-            h-10
-            w-10
-            shrink-0
-            items-center
-            justify-center
-            rounded-xl
-            ${
-              isBan
-                ? 'bg-red-100 text-red-700'
-                : isWarning
-                  ? 'bg-amber-100 text-amber-700'
-                  : isUnban
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-gray-100 text-gray-600'
-            }
-          `}
-        >
-          {isBan ? (
-            <FaBan />
-          ) : isWarning ? (
-            <FaExclamationTriangle />
-          ) : isUnban ? (
-            <FaUnlock />
-          ) : (
-            <FaHistory />
-          )}
+      <div className="relative flex items-start gap-3">
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-lg ${tone.tile} ${tone.glow}`}>
+          {isBan ? <FaBan /> : isWarning ? <FaExclamationTriangle /> : isUnban ? <FaUnlock /> : <FaHistory />}
         </div>
 
         <div className="min-w-0 flex-1">
-
           <div className="flex flex-wrap items-center justify-between gap-2">
-
             <div>
-
-              <h3 className="text-sm font-black capitalize text-gray-900">
-                {item.action_type?.replace(
-                  '_',
-                  ' '
-                )}
+              <h3 className={`text-[11px] font-black uppercase tracking-[0.16em] ${tone.text}`}>
+                {item.action_type?.replace('_', ' ')}
               </h3>
-
               {item.warning_number && (
                 <p className="mt-0.5 text-[10px] font-bold text-amber-600">
-                  Warning #
-                  {
-                    item.warning_number
-                  }
+                  Warning #{item.warning_number}
                 </p>
               )}
-
             </div>
-
             <span className="text-[10px] font-semibold text-gray-400">
-              {formatDateTime(
-                item.created_at
-              )}
+              {formatDateTime(item.created_at)}
             </span>
-
           </div>
 
           <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-gray-600">
-            {item.reason ||
-              'No reason provided.'}
+            {item.reason || 'No reason provided.'}
           </p>
 
           {item.admin_notes && (
-            <div className="mt-3 rounded-xl border border-gray-100 bg-white p-3">
-
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400">
-                Admin Notes
-              </p>
-
-              <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-gray-600">
-                {item.admin_notes}
-              </p>
-
+            <div className="mt-3 rounded-xl border border-gray-100 bg-white/80 p-3">
+              <p className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400">Admin Notes</p>
+              <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-gray-600">{item.admin_notes}</p>
             </div>
           )}
-          {/* DELETE BUTTON */}
+
           <div className="mt-3 flex justify-end">
             <button
               type="button"
@@ -4839,11 +4865,10 @@ function HistoryItem({
               Delete
             </button>
           </div>
-
         </div>
-
       </div>
 
+      <div className={`absolute bottom-0 left-0 h-1 w-14 rounded-tr-full ${tone.bar}`} />
     </div>
   )
 }

@@ -12,7 +12,9 @@ import {
   FaMapMarkerAlt,
   FaCamera,
   FaExclamationTriangle,
-  FaInfoCircle
+  FaInfoCircle,
+  FaShieldAlt,
+  FaCheck
 } from 'react-icons/fa'
 
 // =====================================================
@@ -27,6 +29,14 @@ const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 
 // Days a customer must wait between profile edits (enforced in the database)
 const PROFILE_EDIT_COOLDOWN_DAYS = 60
+
+// ---------- OTP ----------
+// Must match the OTP length set in Supabase (default is 6)
+const OTP_LENGTH = 6
+// Seconds the customer must wait before requesting another code
+const RESEND_SECONDS = 60
+// Wrong attempts allowed before the customer must request a new code
+const MAX_OTP_ATTEMPTS = 5
 
 // Only emails from these known providers are accepted.
 // Write the domain WITHOUT the "@" (e.g. 'icloud.com', not '@icloud.com').
@@ -105,7 +115,7 @@ const TERMS = [
 ]
 
 // =====================================================
-// EMAIL HELPER
+// EMAIL HELPERS
 // Accepts only a valid email whose domain is in the list
 // =====================================================
 
@@ -117,6 +127,80 @@ function isAllowedEmail(email) {
   const domain = value.split('@')[1]
 
   return ALLOWED_EMAIL_DOMAINS.includes(domain)
+}
+
+// "juandelacruz@gmail.com" -> "ju*********z@gmail.com"
+// Shows the customer where the code went without exposing the full address
+function maskEmail(email) {
+  const value = String(email || '')
+  const [name, domain] = value.split('@')
+
+  if (!name || !domain) return value
+
+  if (name.length <= 2) {
+    return `${name[0]}*@${domain}`
+  }
+
+  return `${name.slice(0, 2)}${'*'.repeat(Math.min(name.length - 3, 8))}${name.slice(-1)}@${domain}`
+}
+
+// =====================================================
+// REGISTRATION / OTP HELPERS
+// =====================================================
+
+// Seconds left before another code may be requested
+function getCooldownLeft(sentAt) {
+  if (!sentAt) return 0
+
+  const elapsed = Math.floor((Date.now() - sentAt) / 1000)
+
+  return Math.max(0, RESEND_SECONDS - elapsed)
+}
+
+// Turns Supabase auth errors into customer-friendly text
+function friendlyAuthError(error) {
+  const message = String(error?.message || '')
+
+  if (/rate limit|security purposes|too many|after \d+ seconds/i.test(message)) {
+    return 'Please wait a moment before requesting another code.'
+  }
+
+  return message || 'Something went wrong. Please try again.'
+}
+
+// Asks the database whether a COMPLETED account already uses this
+// email or username. Accounts that were never verified do not count.
+// (needs the check_registration_available() SQL function)
+async function checkAvailability(email, username) {
+  try {
+    const { data, error } = await supabase.rpc('check_registration_available', {
+      p_email: email,
+      p_username: username
+    })
+
+    if (error) {
+      console.warn('Availability check unavailable:', error.message)
+      return { emailTaken: false, usernameTaken: false }
+    }
+
+    return {
+      emailTaken: Boolean(data?.email_taken),
+      usernameTaken: Boolean(data?.username_taken)
+    }
+  } catch (err) {
+    console.warn('Availability check failed:', err)
+    return { emailTaken: false, usernameTaken: false }
+  }
+}
+
+// Sends (or re-sends) the 6-digit email code.
+// Sending to the same email twice is allowed: it simply sends another code,
+// so going back and forth never produces "user already registered".
+function sendEmailCode(email) {
+  return supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true }
+  })
 }
 
 // =====================================================
@@ -278,6 +362,7 @@ async function fetchZipCode(cityCode, cityName, selectedLocality = null) {
 // Blocks paste (keyboard, right-click menu, mobile
 // long-press) and drag-and-drop text into a field,
 // so the customer has to type the value manually.
+// (NOT used on the OTP boxes, so codes can be pasted)
 // =====================================================
 
 const noPaste = {
@@ -287,23 +372,92 @@ const noPaste = {
   onCut: e => e.preventDefault()
 }
 
+// Works on all phones, even without crypto.randomUUID
+// (older iOS/Android, or when the site is opened over plain http)
+function generateId() {
+  const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined
+
+  if (c && typeof c.randomUUID === 'function') {
+    return c.randomUUID()
+  }
+
+  const bytes = new Uint8Array(16)
+
+  if (c && typeof c.getRandomValues === 'function') {
+    c.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = Math.floor(Math.random() * 256)
+    }
+  }
+
+  // UUID v4 format
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0'))
+
+  return [
+    hex.slice(0, 4).join(''),
+    hex.slice(4, 6).join(''),
+    hex.slice(6, 8).join(''),
+    hex.slice(8, 10).join(''),
+    hex.slice(10, 16).join('')
+  ].join('-')
+}
 
 // =====================================================
 // PHOTO HELPER
 // Shrinks the photo to max 800px and converts to JPEG
 // =====================================================
 
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(img)
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Could not read photo.'))
+    }
+
+    img.src = url
+  })
+}
+
 async function resizeAvatar(file, maxSize = 800) {
-  const bitmap = await createImageBitmap(file)
-  const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height))
+  let source
+  let width
+  let height
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      source = await createImageBitmap(file)
+      width = source.width
+      height = source.height
+    } catch {
+      source = null
+    }
+  }
+
+  if (!source) {
+    source = await loadImage(file)
+    width = source.naturalWidth
+    height = source.naturalHeight
+  }
+
+  const scale = Math.min(1, maxSize / Math.max(width, height))
 
   const canvas = document.createElement('canvas')
-  canvas.width = Math.round(bitmap.width * scale)
-  canvas.height = Math.round(bitmap.height * scale)
+  canvas.width = Math.round(width * scale)
+  canvas.height = Math.round(height * scale)
 
-  canvas
-    .getContext('2d')
-    .drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height)
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -327,7 +481,7 @@ export default function Register() {
   // FLOW
   // ---------------------------------------------------
 
-  const [step, setStep] = useState('form') // 'form' | 'review'
+  const [step, setStep] = useState('form') // 'form' | 'review' | 'otp' | 'success'
   const [submitting, setSubmitting] = useState(false)
 
   // ---------------------------------------------------
@@ -356,6 +510,40 @@ export default function Register() {
   const [emailTouched, setEmailTouched] = useState(false)
 
   // ---------------------------------------------------
+  // OTP
+  // ---------------------------------------------------
+
+  // One entry per box, e.g. ['1', '2', '', '', '', '']
+  const [otpDigits, setOtpDigits] = useState(Array(OTP_LENGTH).fill(''))
+  const [otpError, setOtpError] = useState('')
+  const [verifying, setVerifying] = useState(false)
+  const [resendCooldown, setResendCooldown] = useState(0)
+  const [resending, setResending] = useState(false)
+  const [resendMessage, setResendMessage] = useState('')
+  const [otpAttempts, setOtpAttempts] = useState(0)
+
+  // True once the code was accepted but the profile still has to be saved
+  const [emailVerified, setEmailVerified] = useState(false)
+
+  // Shown on the success screen
+  const [successInfo, setSuccessInfo] = useState(null)
+
+  const otpRefs = useRef([])
+
+  // The uploaded profile photo (kept even if the customer goes back and forth)
+  const avatarRef = useRef(null)
+
+  // The code that was sent: { email, sentAt, verified, userId, passwordSet }
+  // Lives in a ref so going Back / Forward does not lose it.
+  const pendingRef = useRef(null)
+
+  // The code as one string (e.g. "123456")
+  const otp = otpDigits.join('')
+
+  // Too many wrong codes: the customer must request a new one
+  const attemptsExhausted = otpAttempts >= MAX_OTP_ATTEMPTS
+
+  // ---------------------------------------------------
   // PROFILE PHOTO
   // ---------------------------------------------------
 
@@ -368,6 +556,26 @@ export default function Register() {
       if (avatarPreview) URL.revokeObjectURL(avatarPreview)
     }
   }, [avatarPreview])
+
+  // ---------------------------------------------------
+  // OTP EFFECTS
+  // ---------------------------------------------------
+
+  // Resend countdown
+  useEffect(() => {
+    if (resendCooldown <= 0) return
+
+    const timer = setTimeout(() => setResendCooldown(s => s - 1), 1000)
+
+    return () => clearTimeout(timer)
+  }, [resendCooldown])
+
+  // Focus the first box when the OTP screen opens
+  useEffect(() => {
+    if (step === 'otp' && !emailVerified) {
+      setTimeout(() => otpRefs.current[0]?.focus(), 50)
+    }
+  }, [step, emailVerified])
 
   // ---------------------------------------------------
   // ADDRESS DATA
@@ -754,11 +962,17 @@ export default function Register() {
       return
     }
 
+    // A new photo means the previous upload (if any) is no longer valid.
+    // (The email code that was already sent is NOT affected.)
+    avatarRef.current = null
+
     setAvatarFile(file)
     setAvatarPreview(URL.createObjectURL(file))
   }
 
   function removeAvatar() {
+    avatarRef.current = null
+
     setAvatarFile(null)
     setAvatarPreview('')
 
@@ -826,8 +1040,8 @@ export default function Register() {
     if (!form.barangay) return 'Please select your barangay.'
 
     if (!/[A-Za-z0-9]/.test(form.street)) {
-  return 'Please enter your street, house number, or building.'
-}
+      return 'Please enter your street, house number, or building.'
+    }
 
     if (!fullNameRegex.test(fullName)) {
       return 'Full name can only contain letters and spaces. Numbers, emojis, and special characters are not allowed.'
@@ -872,7 +1086,108 @@ export default function Register() {
   }
 
   // =====================================================
-  // STEP 2: CONFIRM -> CREATE ACCOUNT
+  // OTP BOX HELPERS
+  // =====================================================
+
+  function resetOtp() {
+    setOtpDigits(Array(OTP_LENGTH).fill(''))
+    setOtpError('')
+  }
+
+  function focusOtpBox(index) {
+    const target = Math.max(0, Math.min(index, OTP_LENGTH - 1))
+    otpRefs.current[target]?.focus()
+  }
+
+  // Typing or autofill (autofill may drop several digits into one box)
+  function handleOtpChange(index, e) {
+    const digits = e.target.value.replace(/\D/g, '')
+
+    setOtpError('')
+
+    // Box was emptied
+    if (!digits) {
+      setOtpDigits(prev => {
+        const next = [...prev]
+        next[index] = ''
+        return next
+      })
+      return
+    }
+
+    setOtpDigits(prev => {
+      const next = [...prev]
+
+      digits
+        .slice(0, OTP_LENGTH - index)
+        .split('')
+        .forEach((digit, offset) => {
+          next[index + offset] = digit
+        })
+
+      return next
+    })
+
+    focusOtpBox(index + digits.length)
+  }
+
+  function handleOtpKeyDown(index, e) {
+    if (e.key === 'Backspace') {
+      e.preventDefault()
+      setOtpError('')
+
+      if (otpDigits[index]) {
+        setOtpDigits(prev => {
+          const next = [...prev]
+          next[index] = ''
+          return next
+        })
+      } else if (index > 0) {
+        setOtpDigits(prev => {
+          const next = [...prev]
+          next[index - 1] = ''
+          return next
+        })
+        focusOtpBox(index - 1)
+      }
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      focusOtpBox(index - 1)
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      focusOtpBox(index + 1)
+    }
+  }
+
+  // Paste a whole code into any box
+  function handleOtpPaste(e) {
+    e.preventDefault()
+
+    const pasted = (e.clipboardData?.getData('text') || '')
+      .replace(/\D/g, '')
+      .slice(0, OTP_LENGTH)
+
+    if (!pasted) return
+
+    setOtpError('')
+
+    setOtpDigits(() => {
+      const next = Array(OTP_LENGTH).fill('')
+      pasted.split('').forEach((digit, i) => {
+        next[i] = digit
+      })
+      return next
+    })
+
+    focusOtpBox(pasted.length)
+  }
+
+  // =====================================================
+  // STEP 2: CONFIRM -> CHECK, UPLOAD PHOTO, SEND CODE
+  //
+  // "Already registered" is only reported when a COMPLETED
+  // account (a row in the users table) really exists.
+  // Pressing Back / Forward never creates or blocks anything.
   // =====================================================
 
   async function handleRegister() {
@@ -881,13 +1196,10 @@ export default function Register() {
     setSubmitting(true)
 
     try {
-      const fullName = form.fullName.trim()
       const username = form.username.trim()
       const email = form.email.trim().toLowerCase()
-      const phone = form.phone.trim()
-      const address = updateAddress().trim()
 
-      // Safety net: never create an account with a disallowed email
+      // Safety net: never use a disallowed email
       if (!isAllowedEmail(email)) {
         setStep('form')
         return alert(
@@ -896,100 +1208,326 @@ export default function Register() {
       }
 
       // -----------------------------------------------
-      // 1. UPLOAD PROFILE PHOTO
+      // 1. IS THE EMAIL / USERNAME ALREADY A REAL ACCOUNT?
+      // Only finished accounts count.
       // -----------------------------------------------
 
-      const blob = await resizeAvatar(avatarFile)
-      const path = `registrations/${crypto.randomUUID()}.jpg`
+      const availability = await checkAvailability(email, username)
 
-      const { error: uploadError } = await supabase.storage
-        .from(AVATAR_BUCKET)
-        .upload(path, blob, {
-          contentType: 'image/jpeg',
-          upsert: false
-        })
-
-      if (uploadError) {
-        return alert(`Photo upload failed: ${uploadError.message}`)
+      if (availability.emailTaken) {
+        setStep('form')
+        return alert('This email is already registered. Please sign in instead.')
       }
 
-      const { data: urlData } = supabase.storage
-        .from(AVATAR_BUCKET)
-        .getPublicUrl(path)
+      if (availability.usernameTaken) {
+        setStep('form')
+        return alert('This username is already taken. Please choose another one.')
+      }
 
-      const avatarUrl = urlData.publicUrl
-      const avatarUploadedAt = new Date().toISOString()
+      const previous = pendingRef.current
 
       // -----------------------------------------------
-      // 2. SUPABASE AUTH SIGN UP
+      // 2. SAME EMAIL, CODE ALREADY SENT -> JUST GO BACK
+      // TO THE OTP SCREEN (no new account, no new email)
       // -----------------------------------------------
 
-      const { data, error } = await supabase.auth.signUp({
+      if (previous?.email === email && previous.sentAt) {
+        setOtpError('')
+        setResendMessage('')
+        setResendCooldown(getCooldownLeft(previous.sentAt))
+        setStep('otp')
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
+      }
+
+      // A different email: drop the old verification session (if any)
+      if (previous?.verified) {
+        await supabase.auth.signOut()
+      }
+
+      // -----------------------------------------------
+      // 3. UPLOAD PROFILE PHOTO
+      // (only once, even if the customer goes back and forth)
+      // -----------------------------------------------
+
+      if (!avatarRef.current?.path) {
+        const blob = await resizeAvatar(avatarFile)
+        const path = `registrations/${generateId()}.jpg`
+
+        const { error: uploadError } = await supabase.storage
+          .from(AVATAR_BUCKET)
+          .upload(path, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          })
+
+        if (uploadError) {
+          return alert(`Photo upload failed: ${uploadError.message}`)
+        }
+
+        const { data: urlData } = supabase.storage
+          .from(AVATAR_BUCKET)
+          .getPublicUrl(path)
+
+        avatarRef.current = {
+          path,
+          avatarUrl: urlData.publicUrl,
+          avatarUploadedAt: new Date().toISOString()
+        }
+      }
+
+      // -----------------------------------------------
+      // 4. SEND THE VERIFICATION CODE
+      // The profile row is saved only after the code is verified
+      // -----------------------------------------------
+
+      const { error } = await sendEmailCode(email)
+
+      if (error) {
+        return alert(friendlyAuthError(error))
+      }
+
+      pendingRef.current = {
         email,
-        password: form.password,
-        options: {
+        sentAt: Date.now(),
+        verified: false,
+        userId: null,
+        passwordSet: false
+      }
+
+      setEmailVerified(false)
+      resetOtp()
+      setOtpAttempts(0)
+      setResendMessage('')
+      setResendCooldown(RESEND_SECONDS)
+      setStep('otp')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (err) {
+      console.error(err)
+      alert(err.message || 'Something went wrong. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // =====================================================
+  // STEP 3: VERIFY CODE -> SET PASSWORD -> SAVE PROFILE
+  // =====================================================
+
+  async function handleVerifyOtp(e) {
+    e.preventDefault()
+
+    if (verifying) return
+
+    const pending = pendingRef.current
+
+    if (!pending?.email) {
+      setStep('form')
+      return
+    }
+
+    if (!pending.verified) {
+      if (attemptsExhausted) {
+        return setOtpError(
+          'Too many incorrect attempts. Please request a new verification code.'
+        )
+      }
+
+      if (otp.length !== OTP_LENGTH) {
+        return setOtpError(`Please enter the ${OTP_LENGTH}-digit code.`)
+      }
+    }
+
+    setVerifying(true)
+    setOtpError('')
+    setResendMessage('')
+
+    try {
+      // -----------------------------------------------
+      // 1. VERIFY THE CODE (skipped when only the
+      // profile save is being retried)
+      // -----------------------------------------------
+
+      if (!pending.verified) {
+        let result = await supabase.auth.verifyOtp({
+          email: pending.email,
+          token: otp,
+          type: 'email'
+        })
+
+        // Some projects issue the code with the "signup" template
+        if (result.error || !result.data?.user) {
+          result = await supabase.auth.verifyOtp({
+            email: pending.email,
+            token: otp,
+            type: 'signup'
+          })
+        }
+
+        if (result.error || !result.data?.user) {
+          const used = otpAttempts + 1
+          const left = MAX_OTP_ATTEMPTS - used
+
+          setOtpAttempts(used)
+          setOtpDigits(Array(OTP_LENGTH).fill(''))
+          focusOtpBox(0)
+
+          return setOtpError(
+            left > 0
+              ? `The code is incorrect or has expired. ${left} ${
+                  left === 1 ? 'attempt' : 'attempts'
+                } remaining.`
+              : 'Too many incorrect attempts. Please request a new verification code.'
+          )
+        }
+
+        pending.verified = true
+        pending.userId = result.data.user.id
+        setEmailVerified(true)
+      }
+
+      // The customer must still be signed in at this point
+      const { data: sessionData } = await supabase.auth.getSession()
+      const userId = sessionData?.session?.user?.id
+
+      if (!userId || userId !== pending.userId) {
+        pending.verified = false
+        pending.userId = null
+        pending.passwordSet = false
+        setEmailVerified(false)
+        resetOtp()
+
+        return setOtpError(
+          'Your verification expired. Please request a new code.'
+        )
+      }
+
+      const fullName = form.fullName.trim()
+      const username = form.username.trim()
+      const phone = form.phone.trim()
+      const address = updateAddress().trim()
+      const avatar = avatarRef.current || {}
+
+      // -----------------------------------------------
+      // 2. SET THE PASSWORD (only after the email is verified)
+      // -----------------------------------------------
+
+      if (!pending.passwordSet) {
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: form.password,
           data: {
             role: 'customer',
             name: fullName,
             username,
             phone,
             address,
-            avatar_url: avatarUrl
+            avatar_url: avatar.avatarUrl
           }
-        }
-      })
-
-      if (error) {
-        setStep('form')
-
-        if (error.message.includes('Email not confirmed')) {
-          return alert('Please verify your email before logging in.')
-        }
-
-        return alert(error.message)
-      }
-
-      // -----------------------------------------------
-      // 3. INSERT USER PROFILE
-      // -----------------------------------------------
-
-      if (data?.user) {
-                const { error: insertError } = await supabase.from('users').insert({
-          id: data.user.id,
-          name: fullName,
-          username,
-          email,
-          phone,
-          address,
-          role: 'customer',
-          avatar_url: avatarUrl,
-          avatar_uploaded_at: avatarUploadedAt,
-          registration_avatar_path: path
         })
 
-        if (insertError) {
-          console.log('Insert error:', insertError.message)
-
-          return alert(
-            `Account was created, but your profile could not be saved: ${insertError.message}`
+        if (updateError) {
+          return setOtpError(
+            `Your email was verified, but your password could not be saved: ${updateError.message}`
           )
         }
+
+        pending.passwordSet = true
       }
 
       // -----------------------------------------------
-      // SUCCESS
+      // 3. SAVE THE PROFILE ROW
+      // This is the ONLY place the users table is written,
+      // and it only runs after a successful verification.
       // -----------------------------------------------
 
-      alert(
-        'Account created! Please check your email to verify your account before logging in.'
-      )
+      const { error: insertError } = await supabase.from('users').insert({
+        id: userId,
+        name: fullName,
+        username,
+        email: pending.email,
+        phone,
+        address,
+        role: 'customer',
+        avatar_url: avatar.avatarUrl,
+        avatar_uploaded_at: avatar.avatarUploadedAt,
+        registration_avatar_path: avatar.path,
+        email_verified_at: new Date().toISOString()
+      })
 
-      navigate('/')
+      if (insertError) {
+        console.log('Insert error:', insertError.message)
+
+        const text = String(insertError.message || '')
+
+        if (insertError.code === '23505' && /username/i.test(text)) {
+          return setOtpError(
+            'That username was just taken. Tap "Change email", choose another username, then try again.'
+          )
+        }
+
+        if (insertError.code === '23505') {
+          return setOtpError(
+            'This email is already registered. Please sign in instead.'
+          )
+        }
+
+        return setOtpError(
+          `Your email was verified, but your profile could not be saved: ${text}`
+        )
+      }
+
+      // -----------------------------------------------
+      // 4. DONE: customer logs in manually, same as before
+      // -----------------------------------------------
+
+      await supabase.auth.signOut()
+
+      setSuccessInfo({ name: fullName, email: pending.email })
+      pendingRef.current = null
+      avatarRef.current = null
+      setEmailVerified(false)
+
+      setStep('success')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       console.error(err)
-      alert(err.message || 'Something went wrong. Please try again.')
+      setOtpError(err.message || 'Something went wrong. Please try again.')
     } finally {
-      setSubmitting(false)
+      setVerifying(false)
+    }
+  }
+
+  // =====================================================
+  // RESEND CODE
+  // =====================================================
+
+  async function handleResendOtp() {
+    const pending = pendingRef.current
+
+    if (!pending?.email || pending.verified) return
+    if (getCooldownLeft(pending.sentAt) > 0 || resending) return
+
+    setOtpError('')
+    setResendMessage('')
+    setResending(true)
+
+    try {
+      const { error } = await sendEmailCode(pending.email)
+
+      if (error) return setOtpError(friendlyAuthError(error))
+
+      pending.sentAt = Date.now()
+
+      resetOtp()
+      setOtpAttempts(0)
+      setResendCooldown(RESEND_SECONDS)
+      setResendMessage('A new verification code has been sent to your email.')
+      focusOtpBox(0)
+    } catch (err) {
+      console.error(err)
+      setOtpError('Could not send a new code. Please try again.')
+    } finally {
+      setResending(false)
     }
   }
 
@@ -1027,9 +1565,14 @@ export default function Register() {
     <>
       <style>{`
 
-        * { box-sizing: border-box; }
+        * {
+          box-sizing: border-box;
+          -webkit-tap-highlight-color: transparent;
+        }
 
         html, body, #root { margin: 0; min-height: 100%; }
+
+        html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
         body {
           font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
@@ -1037,6 +1580,8 @@ export default function Register() {
         }
 
         button, input, select { font-family: inherit; }
+
+        button { touch-action: manipulation; }
 
         .register-page {
           min-height: 100vh;
@@ -1163,48 +1708,9 @@ export default function Register() {
             linear-gradient(rgba(255,255,255,0.50) 1px, transparent 1px),
             linear-gradient(90deg, rgba(255,255,255,0.50) 1px, transparent 1px);
           background-size: 75px 75px;
+          -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 70%);
           mask-image: linear-gradient(to bottom, black 0%, transparent 70%);
         }
-          .top-bar {
-  display: flex;
-  align-items: center;            /* centers logo + text vertically */
-  justify-content: space-between;
-  box-sizing: border-box;
-}
-
-.brand {
-  display: flex;
-  align-items: center;            /* logo and text share the same center line */
-  margin: 0;
-  min-width: 0;
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin: 0;
-}
-
-.brand-info {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  margin: 0;
-  line-height: 1.2;
-}
-
-.brand-name,
-.brand-sub {
-  margin: 0;
-  line-height: 1.25;
-}
-
-.back-button {
-  align-self: center;
-  margin: 0;
-}
 
         .top-bar {
           width: min(1180px, calc(100% - 32px));
@@ -1224,7 +1730,13 @@ export default function Register() {
           box-shadow: 0 20px 55px rgba(31,41,55,0.10), inset 0 1px 0 rgba(255,255,255,0.95);
         }
 
-        .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 11px;
+          min-width: 0;
+          margin: 0;
+        }
 
         .logo {
           width: 40px;
@@ -1233,6 +1745,8 @@ export default function Register() {
           display: flex;
           align-items: center;
           justify-content: center;
+          flex-shrink: 0;
+          margin: 0;
           border-radius: 12px;
           color: #fff;
           background: linear-gradient(145deg, #e74c3c, #c0392b 55%, #922b21);
@@ -1241,29 +1755,40 @@ export default function Register() {
           font-weight: 900;
         }
 
-        .brand-info { min-width: 0; }
+        .brand-info {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          margin: 0;
+          line-height: 1.2;
+        }
 
         .brand-name {
+          margin: 0;
           color: #252525;
           font-size: 13px;
           font-weight: 850;
-          line-height: 1.2;
+          line-height: 1.25;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
 
         .brand-sub {
-          margin-top: 3px;
+          margin: 3px 0 0;
           color: #7b8085;
           font-size: 9px;
+          line-height: 1.25;
           letter-spacing: 0.25px;
           white-space: nowrap;
         }
 
         .back-button {
           flex-shrink: 0;
+          align-self: center;
           height: 38px;
+          margin: 0;
           padding: 0 15px;
           border: 1px solid rgba(192,57,43,0.25);
           border-radius: 11px;
@@ -1418,6 +1943,8 @@ export default function Register() {
           font-size: 12px;
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
           transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+          -webkit-appearance: none;
+          appearance: none;
         }
 
         .input::placeholder { color: #a7aaad; }
@@ -1488,67 +2015,59 @@ export default function Register() {
 
         .photo-upload { display: flex; align-items: center; gap: 16px; }
 
-       .photo-square {
-  width: 92px;
-  height: 92px;
-  min-width: 92px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  overflow: hidden;
-  border: 2px solid #c0392b;   /* was #000 */
-  border-radius: 0;                /* square */
-  background: rgba(255,255,255,0.66);
-  color: #c0392b;
-  font: inherit;
-  font-size: 24px;
-  cursor: pointer;
-  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-appearance: none;
-  appearance: none;
-}
+        .photo-square {
+          width: 92px;
+          height: 92px;
+          min-width: 92px;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          overflow: hidden;
+          border: 2px solid #c0392b;
+          border-radius: 0;
+          background: rgba(255,255,255,0.66);
+          color: #c0392b;
+          font: inherit;
+          font-size: 24px;
+          cursor: pointer;
+          transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
+          -webkit-tap-highlight-color: transparent;
+          -webkit-appearance: none;
+          appearance: none;
+        }
 
-/* hover effect only for mouse / trackpad, not touch screens */
-@media (hover: hover) {
-  .photo-button:hover {
-    background: #c0392b;
-    border-color: #c0392b;
-    color: #fff;
-  }
-}
-.photo-square:active {
-  transform: none;
-  box-shadow: none;
-  background: rgba(255,255,255,0.95);
-}
+        .photo-square:active {
+          transform: none;
+          box-shadow: none;
+          background: rgba(255,255,255,0.95);
+        }
 
-.photo-square:focus {
-  outline: none;
-}
+        .photo-square:focus {
+          outline: none;
+        }
 
-.photo-square:focus-visible {
-  outline: 3px solid #c0392b;
-  outline-offset: 3px;
-}
+        .photo-square:focus-visible {
+          outline: 3px solid #c0392b;
+          outline-offset: 3px;
+        }
 
-.photo-square img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
+        .photo-square img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
 
-.photo-square-text {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #c0392b;   /* was #000 */
-}
+        .photo-square-text {
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #c0392b;
+        }
 
         .photo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
@@ -1568,69 +2087,60 @@ export default function Register() {
           transition: background 0.2s ease, color 0.2s ease;
         }
 
-        .photo-button:hover,
         .secondary-button:hover:not(:disabled) { background: #c0392b; color: #fff; }
 
         .photo-button {
-  border: 2px solid #c0392b;
-  border-radius: 0;
-  background: #fff;
-  color: #c0392b;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
+          border: 2px solid #c0392b;
+          border-radius: 0;
+          background: #fff;
+          color: #c0392b;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
 
-.photo-button:hover {
-  background: #c0392b;
-  border-color: #c0392b;
-  color: #fff;
-}
+        /* hover effect only for mouse / trackpad, not touch screens */
+        @media (hover: hover) {
+          .photo-button:hover {
+            background: #c0392b;
+            border-color: #c0392b;
+            color: #fff;
+          }
+        }
 
         .photo-remove {
-  height: 36px;
-  padding: 0 12px;
-  border: 2px solid #000;
-  border-radius: 0;
-  background: #fff;
-  color: #b91c1c;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
-}
+          height: 36px;
+          padding: 0 12px;
+          border: 2px solid #000;
+          border-radius: 0;
+          background: #fff;
+          color: #b91c1c;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          cursor: pointer;
+          transition: background 0.2s ease, color 0.2s ease;
+        }
 
-.photo-remove:hover {
-  background: #b91c1c;
-  border-color: #b91c1c;
-  color: #fff;
-}
+        .photo-remove:hover {
+          background: #b91c1c;
+          border-color: #b91c1c;
+          color: #fff;
+        }
 
-       .photo-warning {
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 2px solid #c0392b;   /* red line (was black) */
-  border-radius: 0;            /* keep square; use 10px for rounded corners */
-  background: rgba(245,158,11,0.09);
-  color: #8a5a06;
-  font-size: 10px;
-  line-height: 1.6;
-}
-          .photo-warning {
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 2px solid #c0392b;   /* red line (was black) */
-  border-radius: 0;            /* keep square; use 10px for rounded corners */
-  background: rgba(245,158,11,0.09);
-  color: #8a5a06;
-  font-size: 10px;
-  line-height: 1.6;
-}
+        .photo-warning {
+          display: flex;
+          gap: 10px;
+          margin-top: 12px;
+          padding: 10px 12px;
+          border: 2px solid #c0392b;
+          border-radius: 0;
+          background: rgba(245,158,11,0.09);
+          color: #8a5a06;
+          font-size: 10px;
+          line-height: 1.6;
+          text-align: left;
+        }
 
         .photo-warning-icon {
           flex-shrink: 0;
@@ -1662,14 +2172,14 @@ export default function Register() {
         .review-avatar-wrap { display: flex; justify-content: center; margin: 22px 0 18px; }
 
         .review-avatar {
-  width: 120px;
-  height: 120px;
-  object-fit: cover;
-  border-radius: 0;
-  border: 2px solid #c0392b;   /* red line, matching your upload square */
-  box-shadow: none;            /* removes the black block */
-  background: #fff;            /* white behind transparent PNGs */
-}
+          width: 120px;
+          height: 120px;
+          object-fit: cover;
+          border-radius: 0;
+          border: 2px solid #c0392b;
+          box-shadow: none;
+          background: #fff;
+        }
 
         .review-list { margin: 0 0 4px; }
 
@@ -1728,6 +2238,143 @@ export default function Register() {
         .review-actions .secondary-button { height: 49px; padding: 0 18px; border-radius: 13px; }
 
         .review-actions .submit-button { flex: 1; width: auto; }
+
+        /* ---------- OTP / VERIFICATION ---------- */
+
+        .verify-panel { text-align: center; }
+
+        .verify-icon {
+          width: 64px;
+          height: 64px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 18px;
+          border-radius: 18px;
+          background: linear-gradient(145deg, #c0392b, #922b21);
+          color: #fff;
+          font-size: 24px;
+          box-shadow: 0 14px 30px rgba(192,57,43,0.25), inset 0 1px 0 rgba(255,255,255,0.30);
+        }
+
+        .verify-icon.success {
+          background: linear-gradient(145deg, #22a55b, #15803d);
+          box-shadow: 0 14px 30px rgba(22,163,74,0.25), inset 0 1px 0 rgba(255,255,255,0.30);
+        }
+
+        .verify-panel .header-badge { margin-bottom: 12px; }
+
+        .verify-panel .subtitle { margin-left: auto; margin-right: auto; }
+
+        .verify-email {
+          display: inline-block;
+          margin-top: 14px;
+          padding: 8px 14px;
+          border: 1px solid rgba(192,57,43,0.18);
+          border-radius: 999px;
+          background: rgba(192,57,43,0.06);
+          color: #202124;
+          font-size: 12px;
+          font-weight: 800;
+          word-break: break-all;
+        }
+
+        .verify-panel .field { text-align: left; }
+
+        .verify-panel .label { text-align: center; margin-left: 0; }
+
+        .otp-boxes {
+          display: flex;
+          justify-content: center;
+          gap: 10px;
+        }
+
+        .otp-box {
+          flex: 1;
+          min-width: 0;
+          max-width: 62px;
+          height: 62px;
+          padding: 0;
+          border: 1px solid rgba(180,185,190,0.72);
+          border-radius: 12px;
+          outline: none;
+          background: rgba(255,255,255,0.66);
+          color: #242424;
+          text-align: center;
+          font-size: 24px;
+          font-weight: 900;
+          caret-color: #c0392b;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+          transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+          -webkit-appearance: none;
+          appearance: none;
+        }
+
+        .otp-box:hover { background: rgba(255,255,255,0.82); }
+
+        .otp-box:focus {
+          border-color: #c0392b;
+          background: rgba(255,255,255,0.96);
+          box-shadow: 0 0 0 4px rgba(192,57,43,0.08), 0 9px 24px rgba(31,41,55,0.05);
+        }
+
+        .otp-box.filled { border-color: rgba(192,57,43,0.55); }
+
+        .otp-box.error {
+          border-color: #dc2626;
+          background: rgba(220,38,38,0.05);
+        }
+
+        .otp-box:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .otp-message {
+          margin-top: 14px;
+          text-align: center;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.5;
+        }
+
+        .otp-message.error { color: #dc2626; }
+        .otp-message.success { color: #16a34a; }
+
+        .verify-help {
+          margin: 18px 0 0;
+          padding-top: 16px;
+          border-top: 1px solid rgba(200,204,208,0.55);
+          color: #85898d;
+          font-size: 10px;
+          line-height: 1.7;
+          text-align: center;
+        }
+
+        .verify-help strong { color: #565b60; }
+
+        .resend-button {
+          padding: 6px 4px;
+          border: none;
+          background: transparent;
+          color: #c0392b;
+          font-size: 10px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .resend-button:hover:not(:disabled) { text-decoration: underline; }
+
+        .resend-button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .success-summary {
+          margin: 22px 0 0;
+          padding: 14px 16px;
+          border: 1px solid rgba(22,163,74,0.22);
+          border-radius: 12px;
+          background: rgba(22,163,74,0.06);
+          color: #3f4a43;
+          font-size: 11px;
+          line-height: 1.7;
+          text-align: center;
+        }
 
         /* ---------- TERMS + SUBMIT ---------- */
 
@@ -1816,6 +2463,7 @@ export default function Register() {
           z-index: 9999;
           display: flex;
           overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
           padding: 18px;
           background: rgba(20,22,24,0.58);
           backdrop-filter: blur(14px);
@@ -1924,7 +2572,7 @@ export default function Register() {
           position: relative;
           z-index: 3;
           width: 100%;
-          padding: 18px 20px 22px;
+          padding: 18px 20px calc(22px + env(safe-area-inset-bottom, 0px));
           text-align: center;
           color: #ffffff;
           font-size: 10px;
@@ -1956,7 +2604,7 @@ export default function Register() {
           .brand { gap: 9px; }
           .brand-name { font-size: 11px; }
           .brand-sub { display: none; }
-          .back-button { height: 34px; padding: 0 10px; font-size: 9px; border-radius: 9px; }
+          .back-button { height: 38px; padding: 0 12px; font-size: 10px; border-radius: 9px; }
           .register-main { padding: 18px 10px 45px; }
           .register-card { width: 100%; padding: 27px 19px 23px; border-radius: 23px; animation: none; }
           .header-row { gap: 10px; margin-bottom: 15px; }
@@ -1966,12 +2614,14 @@ export default function Register() {
           .form-header { margin-bottom: 23px; }
           .field { margin-bottom: 13px; }
           .label { font-size: 8px; }
+
+          /* 16px stops iPhone Safari from zooming into fields */
           .input, .location-select { height: 48px; font-size: 16px; border-radius: 11px; }
           .input-icon { left: 14px; font-size: 12px; }
           .terms { align-items: flex-start; margin-top: 5px; margin-bottom: 18px; }
           .submit-button { height: 49px; border-radius: 12px; font-size: 11px; }
           .login-text { margin-top: 18px; font-size: 10px; }
-          .register-footer { padding: 14px 15px 20px; font-size: 9px; }
+          .register-footer { padding: 14px 15px calc(20px + env(safe-area-inset-bottom, 0px)); font-size: 9px; }
           .footer-small { font-size: 8px; }
 
           .wave { height: 150px; left: -22%; width: 144%; }
@@ -1982,34 +2632,43 @@ export default function Register() {
 
           .photo-upload { gap: 12px; }
           .photo-square { width: 80px; height: 80px; min-width: 80px; }
+          .photo-button, .photo-remove { height: 40px; }
           .review-row { flex-direction: column; gap: 3px; }
           .review-row dt { flex: none; }
+
           .review-actions {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
 
-.review-actions .submit-button {
-  order: 1;              /* Confirm on top */
-  width: 100%;
-  height: 49px;
-  min-height: 49px;
-}
+          .review-actions .submit-button {
+            order: 1;
+            width: 100%;
+            height: 49px;
+            min-height: 49px;
+          }
 
-.review-actions .secondary-button {
-  order: 2;              /* Edit below */
-  width: 100%;
-  height: 49px;
-  min-height: 49px;
-}
+          .review-actions .secondary-button {
+            order: 2;
+            width: 100%;
+            height: 49px;
+            min-height: 49px;
+          }
+
+          /* font-size 16px+ keeps iOS from zooming into the boxes */
+          .otp-boxes { gap: 7px; }
+          .otp-box { height: 54px; font-size: 22px; border-radius: 10px; }
+
+          .verify-icon { width: 56px; height: 56px; font-size: 21px; border-radius: 16px; }
+          .verify-email { font-size: 11px; }
 
           .modal-overlay { padding: 10px; }
           .modal { margin: auto auto 0; border-radius: 22px 22px 18px 18px; }
           .modal-header { padding: 19px 18px 15px; }
           .modal-content { padding: 18px; font-size: 11px; }
           .modal-footer { padding: 13px 18px; justify-content: stretch; }
-          .modal-button { width: 100%; }
+          .modal-button { width: 100%; height: 44px; }
         }
 
         @media (max-width: 380px) {
@@ -2021,6 +2680,8 @@ export default function Register() {
           .subtitle { font-size: 10px; }
           .input, .location-select { height: 47px; }
           .terms-text { font-size: 9px; }
+          .otp-boxes { gap: 5px; }
+          .otp-box { height: 50px; font-size: 20px; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -2100,7 +2761,7 @@ export default function Register() {
             )}
 
             {/* =============================================
-                FORM (hidden, not unmounted, during review
+                FORM (hidden, not unmounted, during review / otp
                 so nothing the customer typed is lost)
             ============================================= */}
 
@@ -2117,20 +2778,20 @@ export default function Register() {
 
                 <div className="photo-upload">
                   <button
-  type="button"
-  className="photo-square"
-  onClick={() => fileInputRef.current?.click()}
-  aria-label="Upload profile photo"
->
-  {avatarPreview ? (
-    <img src={avatarPreview} alt="Profile preview" />
-  ) : (
-    <>
-      <FaCamera />
-      <span className="photo-square-text">Upload</span>
-    </>
-  )}
-</button>
+                    type="button"
+                    className="photo-square"
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label="Upload profile photo"
+                  >
+                    {avatarPreview ? (
+                      <img src={avatarPreview} alt="Profile preview" />
+                    ) : (
+                      <>
+                        <FaCamera />
+                        <span className="photo-square-text">Upload</span>
+                      </>
+                    )}
+                  </button>
 
                   <div className="photo-actions">
                     <button
@@ -2186,16 +2847,16 @@ export default function Register() {
                   <FaUser className="input-icon" />
 
                   <input
-  type="text"
-  placeholder="Juan Dela Cruz"
-  value={form.fullName}
-  onChange={e => updateField('fullName', e.target.value)}
-  className="input"
-  required
-  maxLength={100}
-  autoComplete="name"
-  {...noPaste}
-/>
+                    type="text"
+                    placeholder="Juan Dela Cruz"
+                    value={form.fullName}
+                    onChange={e => updateField('fullName', e.target.value)}
+                    className="input"
+                    required
+                    maxLength={100}
+                    autoComplete="name"
+                    {...noPaste}
+                  />
                 </div>
               </div>
 
@@ -2208,17 +2869,20 @@ export default function Register() {
                   <FaUser className="input-icon" />
 
                   <input
-  type="text"
-  placeholder="juan_123"
-  value={form.username}
-  onChange={e => updateField('username', e.target.value)}
-  className="input"
-  required
-  minLength={3}
-  maxLength={30}
-  autoComplete="username"
-  {...noPaste}
-/>
+                    type="text"
+                    placeholder="juan_123"
+                    value={form.username}
+                    onChange={e => updateField('username', e.target.value)}
+                    className="input"
+                    required
+                    minLength={3}
+                    maxLength={30}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    {...noPaste}
+                  />
                 </div>
               </div>
 
@@ -2231,17 +2895,21 @@ export default function Register() {
                   <FaEnvelope className="input-icon" />
 
                   <input
-  type="email"
-  placeholder="juan@gmail.com"
-  value={form.email}
-  onChange={e => updateField('email', e.target.value)}
-  onBlur={() => setEmailTouched(true)}
-  className="input"
-  required
-  autoComplete="email"
-  aria-invalid={emailTouched && form.email.length > 0 && !isAllowedEmail(form.email)}
-  {...noPaste}
-/>
+                    type="email"
+                    inputMode="email"
+                    placeholder="juan@gmail.com"
+                    value={form.email}
+                    onChange={e => updateField('email', e.target.value)}
+                    onBlur={() => setEmailTouched(true)}
+                    className="input"
+                    required
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-invalid={emailTouched && form.email.length > 0 && !isAllowedEmail(form.email)}
+                    {...noPaste}
+                  />
                 </div>
 
                 {emailTouched &&
@@ -2262,7 +2930,8 @@ export default function Register() {
                 ) : (
                   <div className="address-helper">
                     Only emails from known providers such as Gmail, Yahoo, or
-                    Outlook are accepted.
+                    Outlook are accepted. We will send a verification code to
+                    this email.
                   </div>
                 )}
               </div>
@@ -2300,11 +2969,10 @@ export default function Register() {
                     pattern="^09[0-9]{9}$"
                     title="Please enter a valid Philippine mobile number starting with 09 and containing exactly 11 digits."
                     className="input"
-  required
-  autoComplete="tel"
-  {...noPaste}
-/>
-
+                    required
+                    autoComplete="tel"
+                    {...noPaste}
+                  />
                 </div>
               </div>
 
@@ -2475,16 +3143,16 @@ export default function Register() {
                   <FaMapMarkerAlt className="input-icon" />
 
                   <input
-  type="text"
-  placeholder="House No., Street, Building"
-  value={form.street}
-  onChange={handleStreetChange}
-  className="input"
-  required
-  maxLength={150}
-  autoComplete="street-address"
-  {...noPaste}
-/>
+                    type="text"
+                    placeholder="House No., Street, Building"
+                    value={form.street}
+                    onChange={handleStreetChange}
+                    className="input"
+                    required
+                    maxLength={150}
+                    autoComplete="street-address"
+                    {...noPaste}
+                  />
                 </div>
               </div>
 
@@ -2529,8 +3197,8 @@ export default function Register() {
                     required
                     minLength={12}
                     autoComplete="new-password"
-  {...noPaste}
-/>
+                    {...noPaste}
+                  />
 
                   <button
                     type="button"
@@ -2607,7 +3275,6 @@ export default function Register() {
                       form.confirmPassword.length > 0 &&
                       form.password !== form.confirmPassword
                     }
-
                   />
 
                   <button
@@ -2698,8 +3365,9 @@ export default function Register() {
                 <h2 className="review-title">Review your account information</h2>
 
                 <p className="subtitle">
-                  Please double-check everything below before creating your
-                  account.
+                  Please double-check everything below. We will send a
+                  verification code to your email before your account is
+                  created.
                 </p>
 
                 <div className="review-avatar-wrap">
@@ -2780,10 +3448,167 @@ export default function Register() {
                     disabled={submitting}
                   >
                     <span>
-                      {submitting
-                        ? 'Creating account...'
-                        : 'Confirm & Create Account'}
+                      {submitting ? 'Please wait...' : 'Send Verification Code'}
                     </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* =============================================
+                OTP STEP
+            ============================================= */}
+
+            {step === 'otp' && (
+              <form
+                className="review-panel verify-panel"
+                onSubmit={handleVerifyOtp}
+              >
+                <div className="verify-icon">
+                  <FaShieldAlt />
+                </div>
+
+                <div className="header-badge">Email Verification</div>
+
+                <h2 className="review-title">Verify your email address</h2>
+
+                <p className="subtitle">
+                  {emailVerified
+                    ? 'Your email is verified. Tap the button below to finish saving your account.'
+                    : `For your security, we sent a ${OTP_LENGTH}-digit verification code to the email address below. Enter it to complete your registration.`}
+                </p>
+
+                <div className="verify-email">
+                  {maskEmail(pendingRef.current?.email)}
+                </div>
+
+                <div className="field" style={{ marginTop: 26 }}>
+                  <label className="label">VERIFICATION CODE</label>
+
+                  <div className="otp-boxes">
+                    {otpDigits.map((digit, index) => (
+                      <input
+                        key={index}
+                        ref={el => (otpRefs.current[index] = el)}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete={index === 0 ? 'one-time-code' : 'off'}
+                        value={digit}
+                        onChange={e => handleOtpChange(index, e)}
+                        onKeyDown={e => handleOtpKeyDown(index, e)}
+                        onPaste={handleOtpPaste}
+                        onFocus={e => e.target.select()}
+                        className={
+                          'otp-box' +
+                          (digit ? ' filled' : '') +
+                          (otpError ? ' error' : '')
+                        }
+                        aria-label={`Digit ${index + 1} of ${OTP_LENGTH}`}
+                        disabled={verifying || attemptsExhausted || emailVerified}
+                      />
+                    ))}
+                  </div>
+
+                  {otpError && (
+                    <div className="otp-message error" role="alert">
+                      {otpError}
+                    </div>
+                  )}
+
+                  {!otpError && resendMessage && (
+                    <div className="otp-message success" role="status">
+                      ✓ {resendMessage}
+                    </div>
+                  )}
+                </div>
+
+                <div className="review-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setStep('form')}
+                    disabled={verifying}
+                  >
+                    ← Change email
+                  </button>
+
+                  <button
+                    type="submit"
+                    className="submit-button"
+                    disabled={
+                      verifying ||
+                      (!emailVerified &&
+                        (attemptsExhausted || otp.length !== OTP_LENGTH))
+                    }
+                  >
+                    <span>
+                      {verifying
+                        ? emailVerified
+                          ? 'Saving...'
+                          : 'Verifying...'
+                        : emailVerified
+                        ? 'Save My Account'
+                        : 'Verify & Create Account'}
+                    </span>
+                  </button>
+                </div>
+
+                {!emailVerified && (
+                  <div className="verify-help">
+                    Did not receive the code? Check your email inbox or{' '}
+                    {resendCooldown > 0 ? (
+                      <strong>request a new code in {resendCooldown}s</strong>
+                    ) : (
+                      <button
+                        type="button"
+                        className="resend-button"
+                        onClick={handleResendOtp}
+                        disabled={resending}
+                      >
+                        {resending ? 'Sending...' : 'resend the code'}
+                      </button>
+                    )}
+                    .
+                  </div>
+                )}
+              </form>
+            )}
+
+            {/* =============================================
+                SUCCESS STEP
+            ============================================= */}
+
+            {step === 'success' && (
+              <div className="review-panel verify-panel">
+                <div className="verify-icon success">
+                  <FaCheck />
+                </div>
+
+                <div className="header-badge">Registration Complete</div>
+
+                <h2 className="review-title">Your account is ready</h2>
+
+                <p className="subtitle">
+                  Your email address has been verified and your customer
+                  account has been created. You may now sign in to book
+                  appointments and manage your vehicle services.
+                </p>
+
+                <div className="success-summary">
+                  Signed up as <strong>{successInfo?.name}</strong>
+                  <br />
+                  {maskEmail(successInfo?.email)}
+                </div>
+
+                <div className="review-actions">
+                  <button
+                    type="button"
+                    className="submit-button"
+                    onClick={() => navigate('/login')}
+                  >
+                    <span>Continue to Sign In</span>
+                    <span className="arrow">→</span>
                   </button>
                 </div>
               </div>

@@ -7,19 +7,81 @@ import {
   FaSearch,
   FaWarehouse,
   FaTools,
-  FaTag,
-  FaChevronRight,
   FaCircle,
+  FaEye,
+  FaCube,
+  FaTimes,
 } from 'react-icons/fa'
+
+const MAX_STOCK = 100
+
+// Photo thumbnail: shows the whole photo, with a hover "View" overlay
+function ItemThumb({ item, onView }) {
+  const overlay = (
+    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-black/50 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+      <FaEye className="text-xl" />
+      <span className="text-[11px] font-semibold">View</span>
+    </div>
+  )
+
+  if (item.image_url) {
+    return (
+      <div className="w-20 shrink-0 sm:w-28">
+        <div
+          onClick={onView}
+          title="View details"
+          className="group relative inline-block max-w-full cursor-pointer"
+        >
+          <img
+            src={item.image_url}
+            alt={item.name}
+            loading="lazy"
+            className="block h-auto w-auto max-h-20 max-w-full rounded-xl border border-gray-200 shadow-sm sm:max-h-28"
+          />
+          {overlay}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      onClick={onView}
+      title="View details"
+      className="group relative flex h-20 w-20 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-2xl text-gray-400 sm:h-28 sm:w-28"
+    >
+      <FaCube />
+      {overlay}
+    </div>
+  )
+}
 
 export default function TechnicianInventory() {
   const [items, setItems] = useState([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [viewItem, setViewItem] = useState(null)
+  const [viewImage, setViewImage] = useState(null)
 
   useEffect(() => {
     fetchItems()
   }, [])
+
+    useEffect(() => {
+    if (!viewItem) return
+
+    const prevBody = document.body.style.overflow
+    const prevHtml = document.documentElement.style.overflow
+
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = prevBody
+      document.documentElement.style.overflow = prevHtml
+    }
+  }, [viewItem])
 
   async function fetchItems() {
     setLoading(true)
@@ -40,12 +102,13 @@ export default function TechnicianInventory() {
     setLoading(false)
   }
 
-  function getStatus(item) {
+    function getStatus(item) {
     if (item.quantity === 0) {
       return {
         text: 'Out of Stock',
         color: 'bg-red-50 text-red-700 border-red-100',
         dot: 'bg-red-500',
+        bar: 'bg-red-500',
       }
     }
 
@@ -54,6 +117,7 @@ export default function TechnicianInventory() {
         text: 'Low Stock',
         color: 'bg-yellow-50 text-yellow-700 border-yellow-100',
         dot: 'bg-yellow-500',
+        bar: 'bg-yellow-500',
       }
     }
 
@@ -61,13 +125,27 @@ export default function TechnicianInventory() {
       text: 'In Stock',
       color: 'bg-green-50 text-green-700 border-green-100',
       dot: 'bg-green-500',
+      bar: 'bg-green-500',
     }
   }
 
-  const filteredItems = items.filter(item =>
-    item.name?.toLowerCase().includes(search.toLowerCase()) ||
-    item.category?.toLowerCase().includes(search.toLowerCase())
-  )
+    const filteredItems = items.filter(item => {
+    const matchesSearch =
+      item.name?.toLowerCase().includes(search.toLowerCase()) ||
+      item.category?.toLowerCase().includes(search.toLowerCase())
+
+    const isOut = item.quantity === 0
+    const isLow =
+      item.quantity > 0 && item.quantity <= item.low_stock_threshold
+
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'out' && isOut) ||
+      (statusFilter === 'low' && isLow) ||
+      (statusFilter === 'in' && !isOut && !isLow)
+
+    return matchesSearch && matchesStatus
+  })
 
   const lowStockItems = items.filter(
     item =>
@@ -78,6 +156,14 @@ export default function TechnicianInventory() {
   const outOfStockItems = items.filter(
     item => item.quantity === 0
   )
+
+    const inStockCount =
+    items.length - lowStockItems.length - outOfStockItems.length
+
+  const viewStatus = viewItem ? getStatus(viewItem) : null
+    const viewStockPercent = viewItem
+    ? Math.min(100, Math.round((viewItem.quantity / MAX_STOCK) * 100))
+    : 0
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f5f7fa] text-gray-900">
@@ -398,94 +484,71 @@ export default function TechnicianInventory() {
         </section>
 
 
-        {/* ================= ALERTS ================= */}
+                {/* ================= FILTER CHIPS ================= */}
 
-        {outOfStockItems.length > 0 && (
+<div className="mb-5 flex flex-wrap gap-2 sm:mb-6">
+  {[
+    {
+      key: 'all',
+      label: 'All',
+      count: items.length,
+      dot: 'bg-gray-400',
+      active: 'border-gray-900 bg-gray-900 text-white',
+    },
+    {
+      key: 'in',
+      label: 'In Stock',
+      count: inStockCount,
+      dot: 'bg-green-500',
+      active: 'border-green-600 bg-green-600 text-white',
+    },
+    {
+      key: 'low',
+      label: 'Low Stock',
+      count: lowStockItems.length,
+      dot: 'bg-yellow-500',
+      active: 'border-yellow-500 bg-yellow-500 text-white',
+    },
+    {
+      key: 'out',
+      label: 'Out of Stock',
+      count: outOfStockItems.length,
+      dot: 'bg-red-500',
+      active: 'border-red-600 bg-red-600 text-white',
+    },
+  ].map((chip) => {
+    const isActive = statusFilter === chip.key
 
-          <div className="mb-4 overflow-hidden rounded-2xl border border-red-200 bg-gradient-to-r from-red-50 to-white shadow-sm sm:mb-5">
-
-            <div className="p-4 sm:p-5">
-
-              <div className="flex items-start gap-3">
-
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-700 ring-1 ring-red-200">
-
-                  <FaExclamationTriangle />
-
-                </div>
-
-                <div className="min-w-0">
-
-                  <h3 className="font-bold text-red-800">
-                    Out of Stock
-                  </h3>
-
-                  <p className="mt-1 text-xs leading-5 text-red-600 sm:text-sm">
-                    Some inventory items are currently unavailable.
-                  </p>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-
-                    {outOfStockItems.map(item => (
-
-                      <span
-                        key={item.id}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 shadow-sm"
-                      >
-                        <FaCircle className="text-[5px]" />
-                        <span className="truncate">
-                          {item.name}
-                        </span>
-                      </span>
-
-                    ))}
-
-                  </div>
-
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-
+    return (
+      <button
+        key={chip.key}
+        type="button"
+        onClick={() => setStatusFilter(chip.key)}
+        className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-all active:scale-95 ${
+          isActive
+            ? `${chip.active} shadow-sm`
+            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:border-gray-300'
+        }`}
+      >
+        {!isActive && (
+          <span className={`h-2 w-2 rounded-full ${chip.dot}`} />
         )}
 
+        {chip.label}
 
-        {lowStockItems.length > 0 && (
-
-          <div className="mb-6 overflow-hidden rounded-2xl border border-yellow-200 bg-gradient-to-r from-yellow-50 to-white shadow-sm">
-
-            <div className="p-4 sm:p-5">
-
-              <div className="flex items-start gap-3">
-
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-yellow-100 text-yellow-700 ring-1 ring-yellow-200">
-
-                  <FaExclamationTriangle />
-
-                </div>
-
-                <div>
-
-                  <h3 className="font-bold text-yellow-800">
-                    Low Stock Alert
-                  </h3>
-
-                  <p className="mt-1 text-xs leading-5 text-yellow-700 sm:text-sm">
-                    These items are running low and may need attention soon.
-                  </p>
-
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-
-        )}
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+            isActive
+              ? 'bg-white/20 text-white'
+              : 'bg-gray-100 text-gray-500'
+          }`}
+        >
+          {chip.count}
+        </span>
+      </button>
+    )
+  })}
+</div>
 
 
         {/* ================= INVENTORY CONTAINER ================= */}
@@ -531,373 +594,166 @@ export default function TechnicianInventory() {
           </div>
 
 
-          {/* ================= DESKTOP TABLE ================= */}
+                    {/* ================= INVENTORY LIST ================= */}
 
-          <div className="hidden overflow-x-auto md:block">
+          {loading ? (
 
-            <table className="w-full">
+            <div className="px-5 py-16 text-center">
 
-              <thead className="bg-[#151515] text-white">
-
-                <tr>
-
-                  <th className="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
-                    Name
-                  </th>
-
-                  <th className="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
-                    Category
-                  </th>
-
-                  <th className="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
-                    Available
-                  </th>
-
-                  <th className="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
-                    Price
-                  </th>
-
-                  <th className="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
-                    Status
-                  </th>
-
-                </tr>
-
-              </thead>
-
-
-              <tbody>
-
-                {loading ? (
-
-                  <tr>
-
-                    <td
-                      colSpan="5"
-                      className="p-14 text-center"
-                    >
-
-                      <div className="mx-auto flex h-11 w-11 animate-pulse items-center justify-center rounded-xl bg-red-50 text-red-600">
-
-                        <FaBoxOpen />
-
-                      </div>
-
-                      <p className="mt-3 text-sm font-semibold text-gray-600">
-                        Loading inventory...
-                      </p>
-
-                    </td>
-
-                  </tr>
-
-                ) : filteredItems.length === 0 ? (
-
-                  <tr>
-
-                    <td
-                      colSpan="5"
-                      className="p-14 text-center"
-                    >
-
-                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
-
-                        <FaSearch className="text-lg" />
-
-                      </div>
-
-                      <p className="mt-4 font-bold text-gray-700">
-                        No inventory items found
-                      </p>
-
-                      <p className="mt-1 text-sm text-gray-400">
-                        Try searching for another item.
-                      </p>
-
-                    </td>
-
-                  </tr>
-
-                ) : (
-
-                  filteredItems.map(item => {
-
-                    const status = getStatus(item)
-
-                    return (
-                      <tr
-                        key={item.id}
-                        className={`group border-t border-gray-100 transition-all duration-200 hover:bg-gray-50 ${
-                          item.quantity === 0
-                            ? 'bg-red-50/30'
-                            : item.quantity <= item.low_stock_threshold
-                            ? 'bg-yellow-50/30'
-                            : ''
-                        }`}
-                      >
-
-                        {/* NAME */}
-
-                        <td className="px-6 py-4">
-
-                          <div className="flex items-center gap-3">
-
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-gray-500 transition-colors group-hover:bg-red-50 group-hover:text-red-600">
-
-                              <FaBoxOpen />
-
-                            </div>
-
-                            <div className="min-w-0">
-
-                              <div className="font-bold text-gray-900">
-                                {item.name}
-                              </div>
-
-                              <div className="mt-0.5 text-xs text-gray-400">
-                                Inventory item
-                              </div>
-
-                            </div>
-
-                          </div>
-
-                        </td>
-
-
-                        {/* CATEGORY */}
-
-                        <td className="px-6 py-4">
-
-                          <span className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">
-
-                            <FaTag className="text-[10px] text-gray-400" />
-
-                            {item.category || 'Uncategorized'}
-
-                          </span>
-
-                        </td>
-
-
-                        {/* QUANTITY */}
-
-                        <td className="px-6 py-4">
-
-                          <div>
-
-                            <span className="font-black text-gray-900">
-                              {item.quantity}
-                            </span>
-
-                            <span className="ml-1 text-xs text-gray-400">
-                              units
-                            </span>
-
-                          </div>
-
-                        </td>
-
-
-                        {/* PRICE */}
-
-                        <td className="px-6 py-4">
-
-                          <span className="font-bold text-gray-800">
-                            ₱{Number(item.price || 0).toLocaleString()}
-                          </span>
-
-                        </td>
-
-
-                        {/* STATUS */}
-
-                        <td className="px-6 py-4">
-
-                          <span
-                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${status.color}`}
-                          >
-
-                            <FaCircle className={`text-[6px] ${status.dot}`} />
-
-                            {status.text}
-
-                          </span>
-
-                        </td>
-
-                      </tr>
-                    )
-                  })
-
-                )}
-
-              </tbody>
-
-            </table>
-
-          </div>
-
-
-          {/* ================= MOBILE LIST ================= */}
-
-          <div className="md:hidden">
-
-            {loading ? (
-
-              <div className="px-5 py-14 text-center">
-
-                <div className="mx-auto flex h-12 w-12 animate-pulse items-center justify-center rounded-xl bg-red-50 text-red-600">
-
-                  <FaBoxOpen />
-
-                </div>
-
-                <p className="mt-3 text-sm font-semibold text-gray-600">
-                  Loading inventory...
-                </p>
-
+              <div className="mx-auto flex h-12 w-12 animate-pulse items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <FaBoxOpen />
               </div>
 
-            ) : filteredItems.length === 0 ? (
+              <p className="mt-3 text-sm font-semibold text-gray-600">
+                Loading inventory...
+              </p>
 
-              <div className="px-5 py-14 text-center">
+            </div>
 
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
+          ) : filteredItems.length === 0 ? (
 
-                  <FaSearch />
+            <div className="px-5 py-16 text-center">
 
-                </div>
-
-                <p className="mt-4 font-bold text-gray-700">
-                  No inventory items found
-                </p>
-
-                <p className="mt-1 text-sm text-gray-400">
-                  Try searching for another item.
-                </p>
-
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
+                <FaSearch className="text-lg" />
               </div>
 
-            ) : (
+              <p className="mt-4 font-bold text-gray-700">
+                No inventory items found
+              </p>
 
-              <div className="divide-y divide-gray-100">
+              <p className="mt-1 text-sm text-gray-400">
+                Try another search or filter.
+              </p>
 
-                {filteredItems.map(item => {
+            </div>
 
-                  const status = getStatus(item)
+          ) : (
 
-                  return (
+            <div className="divide-y divide-gray-100">
 
-                    <div
-                      key={item.id}
-                      className={`p-4 transition-colors duration-200 active:bg-gray-100 ${
-                        item.quantity === 0
-                          ? 'bg-red-50/30'
-                          : item.quantity <= item.low_stock_threshold
-                          ? 'bg-yellow-50/30'
-                          : 'bg-white'
-                      }`}
-                    >
+              {filteredItems.map(item => {
 
-                      {/* TOP ROW */}
+                const status = getStatus(item)
 
-                      <div className="flex items-start justify-between gap-3">
+                const stockPercent = Math.min(
+                  100,
+                  Math.round((item.quantity / MAX_STOCK) * 100)
+                )
 
-                        <div className="flex min-w-0 items-center gap-3">
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-4 transition-colors duration-200 hover:bg-gray-50/80 sm:p-5 ${
+                      item.quantity === 0
+                        ? 'bg-red-50/30'
+                        : item.quantity <= item.low_stock_threshold
+                        ? 'bg-yellow-50/30'
+                        : 'bg-white'
+                    }`}
+                  >
 
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-gray-500">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-8">
 
-                            <FaBoxOpen />
+                      {/* PHOTO + TEXT */}
 
-                          </div>
+                      <div className="flex min-w-0 items-start gap-4 md:flex-1">
 
-                          <div className="min-w-0">
+                        <ItemThumb
+                          item={item}
+                          onView={() => setViewItem(item)}
+                        />
 
-                            <h4 className="truncate font-bold text-gray-900">
+                        <div className="min-w-0 flex-1">
+
+                          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+
+                            <h4 className="break-words font-bold text-gray-950">
                               {item.name}
                             </h4>
 
-                            <div className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
-
-                              <FaTag className="text-[9px] text-gray-400" />
-
-                              <span className="truncate">
-                                {item.category || 'Uncategorized'}
-                              </span>
-
-                            </div>
+                            <span
+                              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold sm:text-xs ${status.color}`}
+                            >
+                              <FaCircle className={`text-[5px] ${status.dot}`} />
+                              {status.text}
+                            </span>
 
                           </div>
 
-                        </div>
+                          {item.category && (
+  <span className="inline-flex mt-1 bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[11px] font-semibold">
+    {item.category}
+  </span>
+)}
 
-                        <FaChevronRight className="mt-2 shrink-0 text-xs text-gray-300" />
-
-                      </div>
-
-
-                      {/* DETAILS */}
-
-                      <div className="mt-4 grid grid-cols-2 gap-3">
-
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                            Available
-                          </p>
-
-                          <p className="mt-1 text-lg font-black text-gray-900">
-                            {item.quantity}
-                            <span className="ml-1 text-[10px] font-semibold text-gray-400">
-                              units
-                            </span>
-                          </p>
-
-                        </div>
-
-
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                            Price
-                          </p>
-
-                          <p className="mt-1 text-lg font-black text-gray-900">
-                            ₱{Number(item.price || 0).toLocaleString()}
-                          </p>
+                          
 
                         </div>
 
                       </div>
 
+                      {/* AVAILABLE + PRICE + STOCK BAR */}
 
-                      {/* STATUS */}
+                      <div className="md:w-60 md:shrink-0">
 
-                      <div className="mt-3">
+                        <div className="grid grid-cols-2 gap-4">
 
-                        <span
-                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${status.color}`}
-                        >
+  <div>
+    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+      Available
+    </p>
 
-                          <FaCircle className={`text-[6px] ${status.dot}`} />
+    <p className="mt-1 text-xl font-black leading-none text-gray-950">
+      {item.quantity}
+      <span className="text-[11px] font-semibold text-gray-400">
+        /{MAX_STOCK}
+      </span>
+    </p>
 
-                          {status.text}
+    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100">
+      <div
+        className={`h-full rounded-full transition-all duration-500 ${status.bar}`}
+        style={{
+          width: `${
+            item.quantity > 0 ? Math.max(stockPercent, 3) : 0
+          }%`,
+        }}
+      />
+    </div>
+  </div>
 
-                        </span>
+  <div>
+    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+      Price
+    </p>
+
+    <p className="mt-1 text-xl font-black leading-none text-gray-950">
+      ₱{Number(item.price || 0).toLocaleString()}
+    </p>
+  </div>
+
+
+
+                        </div>
 
                       </div>
 
                     </div>
 
-                  )
-                })}
+                  </div>
+                )
+              })}
 
-              </div>
+            </div>
 
-            )}
+          )}
 
-          </div>
+
+
+
+
+
 
         </section>
 
@@ -923,6 +779,204 @@ export default function TechnicianInventory() {
         </div>
 
       </main>
+
+            {/* ================= DETAILS MODAL ================= */}
+
+      {viewItem && (
+        <div
+          onClick={() => setViewItem(null)}
+          className="fixed inset-0 z-[9998] flex items-center justify-center overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl md:flex-row"
+          >
+
+            {/* LEFT: photo */}
+            <div className="shrink-0 p-3 md:w-[42%] md:p-4">
+              <div className="flex h-full min-h-[220px] items-center justify-center rounded-2xl bg-gray-100 p-4">
+                {viewItem.image_url ? (
+                  <img
+                    src={viewItem.image_url}
+                    alt={viewItem.name}
+                    onClick={() => setViewImage(viewItem.image_url)}
+                    className="block h-auto w-auto max-h-[40dvh] max-w-full cursor-pointer rounded-xl transition hover:opacity-90 md:max-h-[70vh]"
+                  />
+                ) : (
+                  <div className="flex h-32 w-32 items-center justify-center rounded-xl bg-gray-200 text-4xl text-gray-400">
+                    <FaCube />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* RIGHT: details */}
+            <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain p-5 md:p-6">
+
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-gray-400">
+                  Item Details
+                </h2>
+
+                <button
+                  onClick={() => setViewItem(null)}
+                  className="shrink-0 text-xl text-gray-400 hover:text-gray-700"
+                  aria-label="Close"
+                >
+                  <FaTimes />
+                </button>
+              </div>
+
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="min-w-0 break-words text-xl font-black text-gray-950">
+                  {viewItem.name}
+                </h3>
+
+                <span
+                  className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${viewStatus.color}`}
+                >
+                  <FaCircle className={`text-[6px] ${viewStatus.dot}`} />
+                  {viewStatus.text}
+                </span>
+              </div>
+
+              {viewItem.category && (
+  <span className="inline-flex mt-2 bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-semibold">
+    {viewItem.category}
+  </span>
+)}
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Available
+                  </p>
+                  <p className="mt-1 font-black text-gray-950">
+                    {viewItem.quantity} units
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Price
+                  </p>
+                  <p className="mt-1 font-black text-gray-950">
+                    ₱{Number(viewItem.price || 0).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Low Stock Alert
+                  </p>
+                  <p className="mt-1 font-black text-gray-950">
+                    {viewItem.low_stock_threshold}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Stock Value
+                  </p>
+                  <p className="mt-1 font-black text-gray-950">
+                    ₱
+                    {(
+                      Number(viewItem.quantity || 0) *
+                      Number(viewItem.price || 0)
+                    ).toLocaleString()}
+                  </p>
+                </div>
+
+              </div>
+
+                            <div className="mt-4 rounded-xl border border-gray-200 p-3">
+
+                <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                  <span>Stock level</span>
+                  <span>
+                    {viewItem.quantity}/{MAX_STOCK}
+                  </span>
+                </div>
+
+                <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${viewStatus.bar}`}
+                    style={{
+                      width: `${
+                        viewItem.quantity > 0
+                          ? Math.max(viewStockPercent, 3)
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+
+              </div>
+
+              {viewItem.description && (
+                <div className="mt-4 rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Description
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-700">
+                    {viewItem.description}
+                  </p>
+                </div>
+              )}
+
+              {viewItem.created_at && (
+                <p className="mt-4 text-xs text-gray-400">
+                  Added on{' '}
+                  {new Date(viewItem.created_at).toLocaleDateString('en-PH', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    timeZone: 'Asia/Manila',
+                  })}
+                  {' at '}
+                  {new Date(viewItem.created_at).toLocaleTimeString('en-PH', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true,
+                    timeZone: 'Asia/Manila',
+                  })}
+                </p>
+              )}
+
+              <button
+                onClick={() => setViewItem(null)}
+                className="mt-5 w-full rounded-lg bg-gray-900 py-3 font-semibold text-white transition-all hover:bg-black active:scale-[0.98]"
+              >
+                Close
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= FULL-SIZE PHOTO ================= */}
+
+      {viewImage && (
+        <div
+          onClick={() => setViewImage(null)}
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4"
+        >
+          <button
+            className="absolute right-4 top-4 text-2xl text-white"
+            onClick={() => setViewImage(null)}
+          >
+            <FaTimes />
+          </button>
+
+          <img
+            src={viewImage}
+            alt="Item"
+            className="max-h-[90vh] max-w-full rounded-xl object-contain"
+          />
+        </div>
+      )}
 
     </div>
   )

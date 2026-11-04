@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import React, { useEffect, useRef, useState } from 'react'
+import SpecializedCarousel from './SpecializedCarousel'
 
 import { FaFacebookF } from 'react-icons/fa'
 import { FaTiktok } from 'react-icons/fa6'
@@ -525,10 +526,10 @@ useEffect(() => {
     const handleScroll = () => {
 
       const sections = [
-        'about',
-        'services',
-        'contact'
-      ]
+  'about',
+  'why-choose-us',
+  'contact'
+]
 
       const aboutEl =
         document.getElementById('about')
@@ -2640,7 +2641,7 @@ useEffect(() => {
       {/* SERVICES */}
 
       <a
-        href="#services"
+        href="#why-choose-us"
         className="
           landing-nav-link
           group
@@ -2656,20 +2657,12 @@ useEffect(() => {
           transition-all
           duration-300
         "
-        style={navLinkStyle('services')}
+         style={navLinkStyle('why-choose-us')}
         onClick={closeMobileMenu}
       >
 
-        <FaTools
-          className="
-            text-[12px]
-            opacity-70
-            transition
-            group-hover:opacity-100
-          "
-        />
-
-        <span>Services</span>
+          <FaStar className="text-[12px] opacity-70 transition group-hover:opacity-100" />
+  <span>Why Choose Us</span>
 
       </a>
 
@@ -2896,13 +2889,10 @@ useEffect(() => {
 
       {/* SERVICES */}
 
-      <a
-        href="#services"
-        onClick={closeMobileMenu}
-      >
-        <FaTools style={{ marginRight: 10 }} />
-        Services
-      </a>
+      <a href="#why-choose-us" onClick={closeMobileMenu}>
+  <FaStar style={{ marginRight: 10 }} />
+  Why Choose Us
+</a>
 
 
       {/* HOW IT WORKS */}
@@ -4646,6 +4636,7 @@ useEffect(() => {
 
 <section
   ref={whyChooseRef}
+  id="why-choose-us"
   className="relative overflow-hidden bg-white"
   style={{
     paddingTop: 'clamp(5rem, 9vw, 8rem)',
@@ -5490,310 +5481,15 @@ useEffect(() => {
     SPECIALIZED SERVICES FULL-WIDTH SCROLL AREA
 ===================================================== */}
 
-<div
-  className="
-    relative
-    -mx-5
-    w-[calc(100%+2.5rem)]
-    sm:-mx-8
-    sm:w-[calc(100%+4rem)]
-    lg:-mx-10
-    lg:w-[calc(100%+5rem)]
-  "
->
-  <div
-    ref={specializedScrollRef}
-    className="
-      landing-specialized-scroll
-      flex
-      w-full
-      gap-5
-      overflow-x-auto
-      overflow-y-hidden
-      px-5
-      pb-4
-      scroll-smooth
-      snap-x
-      snap-mandatory
-      touch-pan-x
-      overscroll-x-contain
-      select-none
-
-      [-ms-overflow-style:none]
-      [scrollbar-width:none]
-      [&::-webkit-scrollbar]:hidden
-
-      sm:gap-6
-      sm:px-8
-      lg:px-10
-    "
-    style={{
-      WebkitOverflowScrolling: 'touch',
-      scrollbarWidth: 'none'
-    }}
-    onWheel={(e) => {
-      const container = e.currentTarget
-
-      if (
-        Math.abs(e.deltaY) >
-          Math.abs(e.deltaX) &&
-        container.scrollWidth >
-          container.clientWidth
-      ) {
-        e.preventDefault()
-        container.scrollLeft += e.deltaY
-      }
-    }}
-  >
-
-    {specializedServices.map(
-      (service, index) => (
-
-        <div
-          key={index}
-          onMouseEnter={() => {
-            setSpecializedActiveIndex(index)
-          }}
-          className={`
-            landing-card
-            landing-specialized-card
-            group
-            relative
-            min-h-[280px]
-            w-[82vw]
-            min-w-[82vw]
-            shrink-0
-            snap-start
-            overflow-hidden
-            rounded-[24px]
-            border
-            border-white/10
-            transform-gpu
-            will-change-transform
-
-            sm:w-[420px]
-            sm:min-w-[420px]
-
-            lg:w-[430px]
-            lg:min-w-[430px]
-
-            ${
-              specializedServicesVisible
-                ? 'translate-x-0'
-                : index < 4
-                  ? '-translate-x-16'
-                  : 'translate-x-16'
-            }
-          `}
-          style={{
-            ...styles.specializedCard,
-            background: 'transparent',
-            opacity:
-              specializedServicesVisible
-                ? 1
-                : 0,
-            transition:
-              'transform 900ms cubic-bezier(0.16,1,0.3,1), opacity 600ms ease-out',
-            transitionDelay:
-              `${(index % 4) * 80}ms`
-          }}
-        >
-
-          {/* =================================================
-              IMAGE
-          ================================================= */}
-
-          <img
-            src={service.image}
-            alt={service.title}
-            draggable="false"
-            className="
-              pointer-events-none
-              absolute
-              inset-0
-              h-full
-              w-full
-              object-cover
-              transition-transform
-              duration-500
-              ease-out
-              will-change-transform
-              group-hover:scale-110
-            "
-          />
-
-          {/* =================================================
-              DARK GRADIENT OVERLAY
-          ================================================= */}
-
-          <div
-            className="
-              pointer-events-none
-              absolute
-              inset-0
-              bg-gradient-to-t
-              from-black/90
-              via-black/55
-              to-black/20
-            "
-          />
-
-          {/* =================================================
-              CONTENT
-          ================================================= */}
-
-          <div
-            className="
-              relative
-              z-10
-              flex
-              min-h-[280px]
-              h-full
-              flex-col
-              justify-between
-              p-6
-            "
-          >
-
-            {/* TOP */}
-
-            <div
-              className="
-                flex
-                items-center
-                justify-between
-              "
-            >
-
-              {/* ICON */}
-
-              <div
-                style={styles.specializedIcon}
-                className="
-                  transition-transform
-                  duration-300
-                  group-hover:-translate-y-1
-                "
-              >
-                {service.icon}
-              </div>
-
-              {/* NUMBER */}
-
-              <div
-                style={{
-                  ...styles.specializedNumber,
-                  color:
-                    'rgba(255,255,255,0.75)'
-                }}
-              >
-                {String(index + 1).padStart(2, '0')}
-              </div>
-
-            </div>
-
-            {/* BOTTOM CONTENT */}
-
-            <div>
-
-              <h3
-                className="landing-specialized-title"
-                style={{
-                  ...styles.specializedTitle,
-                  color: '#ffffff'
-                }}
-              >
-                {service.title}
-              </h3>
-
-              <p
-                className="landing-specialized-description"
-                style={{
-                  ...styles.specializedDescription,
-                  color:
-                    'rgba(255,255,255,0.82)'
-                }}
-              >
-                {service.description}
-              </p>
-
-            </div>
-
-          </div>
-
-        </div>
-
-      )
-    )}
-
-  </div>
-
-  {/* =====================================================
-      SCROLL DOT INDICATOR
-  ===================================================== */}
-
-  <div
-    className="
-      mt-5
-      flex
-      items-center
-      justify-center
-      gap-2
-      px-5
-      sm:px-8
-      lg:px-10
-    "
-  >
-    {specializedServices.map((_, index) => (
-      <button
-        key={index}
-        type="button"
-        aria-label={`Go to specialized service ${index + 1}`}
-        onClick={() => {
-          const container =
-            specializedScrollRef.current
-
-          if (!container) return
-
-          const cards =
-            container.querySelectorAll(
-              '.landing-specialized-card'
-            )
-
-          const card = cards[index]
-
-          if (!card) return
-
-          container.scrollTo({
-            left:
-              card.offsetLeft -
-              (container.clientWidth -
-                card.offsetWidth) /
-                2,
-            behavior: 'smooth'
-          })
-
-          setSpecializedActiveIndex(index)
-        }}
-        className={`
-          h-2
-          rounded-full
-          transition-all
-          duration-300
-          ${
-            specializedActiveIndex === index
-              ? 'w-6 bg-white/90'
-              : 'w-2 bg-white/30 hover:bg-white/50'
-          }
-        `}
-      />
-    ))}
-  </div>
-
-</div>
+   <SpecializedCarousel
+     services={specializedServices}
+     visible={specializedVisible}
+   />
         </div>
 
       </section>
+
+
 
 
 

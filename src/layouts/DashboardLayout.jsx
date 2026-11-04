@@ -29,7 +29,7 @@ export default function DashboardLayout() {
   // CONFIGURATION
   // =========================================================
 
-  const ENABLE_INACTIVITY_LOGOUT = false
+  const ENABLE_INACTIVITY_LOGOUT = false// Set to false to disable inactivity logout feature
 
   // =========================================================
   // DROPDOWN STATE
@@ -71,6 +71,13 @@ export default function DashboardLayout() {
 
   const [accountModeration, setAccountModeration] = useState(null)
   const [moderationLoading, setModerationLoading] = useState(true)
+  // =========================================================
+// IS ACCOUNT BANNED?
+// =========================================================
+
+const isBanned =
+  userRole === 'customer' &&
+  accountModeration?.status === 'banned'
 
   // =========================================================
   // LOGOUT
@@ -107,6 +114,10 @@ export default function DashboardLayout() {
   // =========================================================
 
   const resetInactivityTimer = () => {
+  if (isBanned) {
+    setShowLogoutWarning(false)
+    return
+  }
     clearTimers()
 
     warningRef.current = false
@@ -365,8 +376,23 @@ export default function DashboardLayout() {
   // ACTIVITY DETECTION
   // =========================================================
 
+  
+  // =========================================================
+  // ACTIVITY DETECTION
+  // =========================================================
+
   useEffect(() => {
+    // Never run inactivity tracking for banned accounts.
+    if (isBanned) {
+      clearTimers()
+      warningRef.current = false
+      setShowLogoutWarning(false)
+      setCountdown(10)
+      return
+    }
+
     if (!ENABLE_INACTIVITY_LOGOUT) {
+      clearTimers()
       return
     }
 
@@ -379,7 +405,7 @@ export default function DashboardLayout() {
     ]
 
     const handleActivity = () => {
-      if (warningRef.current) return
+      if (isBanned || warningRef.current) return
 
       resetInactivityTimer()
     }
@@ -397,7 +423,8 @@ export default function DashboardLayout() {
 
       clearTimers()
     }
-  }, [])
+  }, [isBanned])
+
 
   // =========================================================
   // CLOSE DROPDOWN WHEN ROUTE CHANGES
@@ -495,11 +522,13 @@ export default function DashboardLayout() {
       icon: <FaTachometerAlt />,
       path: '/admin',
     },
+
     {
       label: 'Tasks',
       icon: <FaClipboardList />,
       path: '/admin/tasks',
     },
+
     {
       label: 'Inventory',
       icon: <FaBox />,
@@ -507,31 +536,28 @@ export default function DashboardLayout() {
     },
 
     {
-  label: 'Booking',
-  icon: <FaCalendarAlt />,
-  path: '/admin/booking',
-},
-
-
-   
+      label: 'Booking',
+      icon: <FaCalendarAlt />,
+      path: '/admin/booking',
+    },
 
     {
       label: 'Appointments',
       icon: <FaCalendarAlt />,
       path: '/admin/appointments',
     },
+
     {
       label: 'Archive',
       icon: <FaArchive />,
       path: '/admin/archive',
     },
-    // =====================================================
-  // WARRANTY DOCUMENT
-  // =====================================================
 
-      // =====================================================
-    // WARRANTY DOCUMENTS
-    // =====================================================
+    {
+      label: 'Transactions',
+      icon: <FaReceipt />,
+      path: '/admin/transactions',
+    },
 
     {
       label: 'Warranty Policy',
@@ -544,20 +570,7 @@ export default function DashboardLayout() {
       icon: <FaHome />,
       path: '/admin/home-service-warranty',
     },
-    {
-      label: 'Transactions',
-      icon: <FaReceipt />,
-      path: '/admin/transactions',
-    },
-
-     {
-  label: 'Announcements',
-  icon: <FaBullhorn />,
-  path: '/admin/announcements',
-},
-
- 
-
+    
     {
       label: 'Profile',
       icon: <FaUser />,
@@ -568,6 +581,11 @@ export default function DashboardLayout() {
       icon: <FaUserShield />,
       path: '/admin/customers',
     },
+    {
+  label: 'Announcements',
+  icon: <FaBullhorn />,
+  path: '/admin/announcements',
+},
     
   ]
 
@@ -632,13 +650,6 @@ export default function DashboardLayout() {
     userRole
   )
 
-  // =========================================================
-  // IS ACCOUNT BANNED?
-  // =========================================================
-
-  const isBanned =
-    userRole === 'customer' &&
-    accountModeration?.status === 'banned'
 
   // =========================================================
   // MENU NAVIGATION
@@ -1831,183 +1842,326 @@ gap-2
   </div>
 </main>
 
+      
+      
+{/* =====================================================
+    MODERN GRAY INACTIVITY WARNING MODAL
+===================================================== */}
 
+{showLogoutWarning && !isBanned && (
+  <div
+    className="
+      fixed inset-0 z-[100]
+      flex items-center justify-center
+      overflow-y-auto overscroll-contain
+      bg-slate-950/70
+      px-4 py-6
+      backdrop-blur-sm
+    "
+  >
+    <div
+      className="
+        w-full max-w-md overflow-hidden
+        rounded-3xl border border-gray-200/80
+        bg-white shadow-2xl
+        shadow-gray-950/20
+      "
+    >
+      {/* GRAY GRADIENT HEADER */}
 
-
-      {/* =====================================================
-          INACTIVITY WARNING
-      ===================================================== */}
-
-      {showLogoutWarning && (
+      <div
+        className="
+          relative overflow-hidden
+          bg-gradient-to-br
+          from-gray-700 via-gray-800 to-gray-950
+          px-6 py-7 text-white
+          sm:px-8 sm:py-8
+        "
+      >
         <div
           className="
-            fixed
-            inset-0
-            z-[100]
-            flex
-            items-center
-            justify-center
-            bg-black/30
-            p-4
-            backdrop-blur-[2px]
+            pointer-events-none absolute
+            -right-12 -top-16
+            h-40 w-40 rounded-full
+            border-[20px] border-white/5
+          "
+        />
+
+        <div
+          className="
+            pointer-events-none absolute
+            -bottom-16 -left-10
+            h-36 w-36 rounded-full
+            bg-white/5
+          "
+        />
+
+        <div
+          className="
+            relative z-10 flex
+            items-center gap-4
           "
         >
           <div
             className="
-              w-full
-              max-w-sm
-              rounded-2xl
-              border
-              border-gray-200
-              bg-white
-              p-6
-              shadow-2xl
+              flex h-14 w-14 shrink-0
+              items-center justify-center
+              rounded-2xl border
+              border-white/20 bg-white/10
+              text-white shadow-lg
+              backdrop-blur-sm
             "
           >
-            <div className="text-center">
+            <FaSignOutAlt className="text-2xl" />
+          </div>
 
-              <div
+          <div className="min-w-0">
+            <p
+              className="
+                text-[10px] font-extrabold
+                uppercase tracking-[0.2em]
+                text-gray-300
+              "
+            >
+              Session Security
+            </p>
+
+            <h2
+              className="
+                mt-1 text-xl font-extrabold
+                tracking-tight text-white
+                sm:text-2xl
+              "
+            >
+              Are You Still There?
+            </h2>
+
+            <p
+              className="
+                mt-1.5 text-sm leading-5
+                text-gray-300
+              "
+            >
+              Your session is about to expire.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* WHITE CONTENT */}
+
+      <div className="px-6 py-7 sm:px-8 sm:py-8">
+        <div
+          className="
+            rounded-2xl border border-gray-200
+            bg-gradient-to-br from-gray-50 to-white
+            p-4 sm:p-5
+          "
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className="
+                flex h-10 w-10 shrink-0
+                items-center justify-center
+                rounded-xl bg-gray-200
+                text-gray-700
+              "
+            >
+              <FaExclamationTriangle />
+            </div>
+
+            <div>
+              <h3
                 className="
-                  mx-auto
-                  mb-4
-                  flex
-                  h-12
-                  w-12
-                  items-center
-                  justify-center
-                  rounded-full
-                  bg-red-50
-                  text-red-600
+                  text-sm font-extrabold
+                  text-gray-900
                 "
               >
-                <FaSignOutAlt />
-              </div>
+                Inactivity Detected
+              </h3>
 
-              <h2 className="text-lg font-bold text-gray-900">
-                Inactivity detected
-              </h2>
-
-              <p className="mt-2 text-sm text-gray-500">
-                You will be logged out due to inactivity.
+              <p
+                className="
+                  mt-1.5 text-sm leading-6
+                  text-gray-600
+                "
+              >
+                You will be automatically logged
+                out if you do not confirm that
+                you are still using the system.
               </p>
-
-              <div className="mt-5">
-
-                <div className="text-3xl font-bold text-red-600">
-                  {countdown}
-                </div>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  seconds remaining
-                </p>
-
-              </div>
-
-              <button
-                type="button"
-                onClick={resetInactivityTimer}
-                className="
-                  mt-6
-                  w-full
-                  rounded-xl
-                  bg-gray-900
-                  px-4
-                  py-3
-                  text-sm
-                  font-semibold
-                  text-white
-                  transition
-                  hover:bg-gray-800
-                  active:bg-gray-700
-                "
-              >
-                I'm still here
-              </button>
-
             </div>
           </div>
         </div>
-      )}
+
+        {/* COUNTDOWN */}
+
+        <div
+          className="
+            mt-5 rounded-2xl border
+            border-gray-200 bg-white
+            px-4 py-6 text-center
+          "
+        >
+          <p
+            className="
+              text-xs font-bold uppercase
+              tracking-[0.16em] text-gray-500
+            "
+          >
+            Automatic logout in
+          </p>
+
+          <div
+            className="
+              mt-3 inline-flex h-24 w-24
+              items-center justify-center
+              rounded-full border-[5px]
+              border-gray-200
+              bg-gradient-to-br
+              from-gray-100 to-white
+              shadow-inner
+            "
+          >
+            <span
+              className="
+                text-4xl font-black
+                tabular-nums tracking-tight
+                text-gray-800
+              "
+            >
+              {countdown}
+            </span>
+          </div>
+
+          <p className="mt-3 text-sm font-medium text-gray-500">
+            {countdown === 1
+              ? 'second remaining'
+              : 'seconds remaining'}
+          </p>
+        </div>
+
+        {/* CONTINUE SESSION */}
+
+        <button
+          type="button"
+          onClick={resetInactivityTimer}
+          className="
+            group mt-6 flex w-full
+            items-center justify-center gap-2.5
+            rounded-xl
+            bg-gradient-to-r
+            from-gray-700 via-gray-800 to-gray-900
+            px-5 py-3.5
+            text-sm font-bold text-white
+            shadow-lg shadow-gray-900/20
+            transition duration-200
+            hover:-translate-y-0.5
+            hover:from-gray-800 hover:to-black
+            hover:shadow-xl
+            active:translate-y-0
+            active:scale-[0.99]
+            focus:outline-none focus:ring-4
+            focus:ring-gray-300
+          "
+        >
+          <FaShieldAlt className="transition-transform group-hover:scale-110" />
+          I'm still here
+        </button>
+
+        <p
+          className="
+            mt-4 text-center text-xs
+            leading-5 text-gray-400
+          "
+        >
+          Continue using the system to keep
+          your session active.
+        </p>
+      </div>
+    </div>
+  </div>
+)}
 
 
 
+
+      
+
+      
       {/* =====================================================
-          BANNED ACCOUNT MODAL
+          MODERN BANNED ACCOUNT MODAL
       ===================================================== */}
 
       {isBanned && (
         <div
           className="
-            fixed
-            inset-0
-            z-[200]
-            flex
-            items-center
-            justify-center
-            bg-gray-950/70
-            p-4
+            fixed inset-0 z-[200]
+            flex items-center justify-center
+            overflow-y-auto overscroll-contain
+            bg-slate-950/70
+            px-3 py-5 sm:px-4 sm:py-6
             backdrop-blur-sm
           "
         >
           <div
             className="
-              w-full
-              max-w-lg
-              overflow-hidden
-              rounded-2xl
-              bg-white
-              shadow-2xl
+              my-auto w-full max-w-lg
+              overflow-hidden rounded-3xl
+              border border-gray-200/80
+              bg-white shadow-2xl
+              shadow-red-950/20
             "
           >
-
-            {/* =================================================
-                RED HEADER
-            ================================================= */}
+            {/* GRADIENT HEADER */}
 
             <div
               className="
+                relative overflow-hidden
                 bg-gradient-to-br
-                from-red-700
-                to-red-900
-                px-5
-                py-6
-                text-white
-
-                sm:px-7
-                sm:py-7
+                from-red-700 via-red-800 to-red-950
+                px-6 py-7 text-white
+                sm:px-8 sm:py-8
               "
             >
-              <div className="flex items-start gap-4">
+              <div
+                className="
+                  pointer-events-none absolute
+                  -right-12 -top-16
+                  h-44 w-44 rounded-full
+                  border-[24px] border-white/5
+                "
+              />
 
+              <div
+                className="
+                  pointer-events-none absolute
+                  -bottom-20 -left-12
+                  h-40 w-40 rounded-full
+                  bg-white/5
+                "
+              />
+
+              <div className="relative z-10 flex items-start gap-4">
                 <div
                   className="
-                    flex
-                    h-12
-                    w-12
-                    shrink-0
-                    items-center
-                    justify-center
-                    rounded-xl
-                    bg-white/15
-                    ring-1
-                    ring-white/20
-
-                    sm:h-14
-                    sm:w-14
+                    flex h-14 w-14 shrink-0
+                    items-center justify-center
+                    rounded-2xl border
+                    border-white/20 bg-white/10
+                    text-white shadow-lg
+                    backdrop-blur-sm
                   "
                 >
-                  <FaBan className="text-xl sm:text-2xl" />
+                  <FaBan className="text-2xl" />
                 </div>
 
                 <div className="min-w-0">
-
                   <p
                     className="
-                      text-xs
-                      font-bold
-                      uppercase
-                      tracking-widest
-                      text-red-200
+                      text-[10px] font-extrabold
+                      uppercase tracking-[0.2em]
+                      text-red-100
                     "
                   >
                     Alavaren Auto Electrical
@@ -2015,11 +2169,9 @@ gap-2
 
                   <h2
                     className="
-                      mt-1
-                      text-xl
-                      font-extrabold
-
-                      sm:text-2xl
+                      mt-1 text-2xl font-extrabold
+                      tracking-tight text-white
+                      sm:text-3xl
                     "
                   >
                     Account Banned
@@ -2027,148 +2179,124 @@ gap-2
 
                   <p
                     className="
-                      mt-1
-                      text-sm
-                      text-red-100
+                      mt-2 text-sm leading-6
+                      text-red-100/90
                     "
                   >
-                    Access to your customer account has been restricted.
+                    Customer account access has been
+                    restricted by an administrator.
                   </p>
-
                 </div>
               </div>
-            </div>
-
-            {/* =================================================
-                MODAL CONTENT
-            ================================================= */}
-
-            <div className="p-5 sm:p-7">
 
               <div
                 className="
-                  rounded-xl
-                  border
-                  border-red-100
-                  bg-red-50
-                  p-4
+                  absolute bottom-0 left-0 h-1 w-full
+                  bg-gradient-to-r
+                  from-white/10 via-white/50 to-transparent
+                "
+              />
+            </div>
 
-                  sm:p-5
+            {/* MODAL CONTENT */}
+
+            <div className="px-5 py-6 sm:px-7 sm:py-7">
+              {/* WARNING MESSAGE */}
+
+              <div
+                className="
+                  rounded-2xl border border-red-100
+                  bg-gradient-to-br from-red-50 to-white
+                  p-4 sm:p-5
                 "
               >
-                <div className="flex gap-3">
-
-                  <FaExclamationTriangle
+                <div className="flex items-start gap-3">
+                  <div
                     className="
-                      mt-0.5
-                      shrink-0
-                      text-red-600
+                      flex h-10 w-10 shrink-0
+                      items-center justify-center
+                      rounded-xl bg-red-100
+                      text-red-700
                     "
-                  />
+                  >
+                    <FaExclamationTriangle />
+                  </div>
 
-                  <div>
-
-                    <h3 className="font-bold text-red-900">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-extrabold text-gray-900">
                       Dear Customer,
                     </h3>
 
-                    <p
-                      className="
-                        mt-1
-                        text-sm
-                        leading-6
-                        text-red-800
-                      "
-                    >
-                      Your account has been banned by an administrator.
-                      You are currently unable to make bookings,
-                      appointments, or perform other customer actions.
+                    <p className="mt-1.5 text-sm leading-6 text-gray-600">
+                      Your account has been banned by an
+                      administrator. You cannot make bookings,
+                      manage appointments, or perform other
+                      customer actions while this restriction
+                      remains active.
                     </p>
-
                   </div>
                 </div>
               </div>
 
-              {/* =================================================
-                  BAN INFORMATION
-              ================================================= */}
+              {/* BAN DETAILS */}
 
               <div className="mt-5 space-y-3">
+                {/* BANNED BY */}
 
                 <div
                   className="
-                    rounded-xl
-                    border
-                    border-gray-100
-                    bg-gray-50
-                    p-4
+                    rounded-2xl border border-gray-200
+                    bg-white p-4 sm:p-5
                   "
                 >
-                  <p
-                    className="
-                      text-xs
-                      font-semibold
-                      uppercase
-                      tracking-wide
-                      text-gray-400
-                    "
-                  >
-                    Banned By
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="
+                        flex h-10 w-10 shrink-0
+                        items-center justify-center
+                        rounded-xl bg-gray-100
+                        text-gray-600
+                      "
+                    >
+                      <FaUserShield />
+                    </div>
 
-                  <p
-                    className="
-                      mt-1
-                      break-words
-                      text-sm
-                      font-bold
-                      text-gray-900
-                    "
-                  >
-                    {accountModeration?.adminName ||
-                      'Administrator'}
-                  </p>
+                    <div className="min-w-0">
+                      <p
+                        className="
+                          text-xs font-bold uppercase
+                          tracking-wider text-gray-500
+                        "
+                      >
+                        Banned By
+                      </p>
+
+                      <p className="mt-1 break-words text-sm font-extrabold text-gray-900">
+                        {accountModeration?.adminName ||
+                          'Administrator'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <div
-                  className="
-                    grid
-                    grid-cols-1
-                    gap-3
+                {/* DATE AND TIME */}
 
-                    sm:grid-cols-2
-                  "
-                >
-
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div
                     className="
-                      rounded-xl
-                      border
-                      border-gray-100
-                      bg-gray-50
-                      p-4
+                      rounded-2xl border border-gray-200
+                      bg-white p-4
                     "
                   >
-                    <p
-                      className="
-                        text-xs
-                        font-semibold
-                        uppercase
-                        tracking-wide
-                        text-gray-400
-                      "
-                    >
-                      Date Banned
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <FaCalendarAlt className="text-red-700" />
 
-                    <p
-                      className="
-                        mt-1
-                        text-sm
-                        font-bold
-                        text-gray-900
-                      "
-                    >
+                      <p className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                        Date Banned
+                      </p>
+                    </div>
+
+                    <p className="mt-2 text-sm font-extrabold leading-6 text-gray-900">
                       {formatBanDate(
                         accountModeration?.banned_at
                       )}
@@ -2177,135 +2305,107 @@ gap-2
 
                   <div
                     className="
-                      rounded-xl
-                      border
-                      border-gray-100
-                      bg-gray-50
-                      p-4
+                      rounded-2xl border border-gray-200
+                      bg-white p-4
                     "
                   >
-                    <p
-                      className="
-                        text-xs
-                        font-semibold
-                        uppercase
-                        tracking-wide
-                        text-gray-400
-                      "
-                    >
-                      Time Banned
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <FaCalendarAlt className="text-red-700" />
 
-                    <p
-                      className="
-                        mt-1
-                        text-sm
-                        font-bold
-                        text-gray-900
-                      "
-                    >
+                      <p className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                        Time Banned
+                      </p>
+                    </div>
+
+                    <p className="mt-2 text-sm font-extrabold leading-6 text-gray-900">
                       {formatBanTime(
                         accountModeration?.banned_at
                       )}
                     </p>
-                  </div>
 
+                    <p className="mt-1 text-xs text-gray-500">
+                      Local device time
+                    </p>
+                  </div>
                 </div>
 
-                {/* =================================================
-                    REASON
-                ================================================= */}
+                {/* REASON */}
 
                 <div
                   className="
-                    rounded-xl
-                    border
-                    border-gray-100
-                    bg-gray-50
-                    p-4
+                    rounded-2xl border border-gray-200
+                    bg-white p-4 sm:p-5
                   "
                 >
-                  <p
-                    className="
-                      text-xs
-                      font-semibold
-                      uppercase
-                      tracking-wide
-                      text-gray-400
-                    "
-                  >
-                    Reason
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="
+                        flex h-10 w-10 shrink-0
+                        items-center justify-center
+                        rounded-xl bg-red-50
+                        text-red-700
+                      "
+                    >
+                      <FaShieldAlt />
+                    </div>
 
-                  <p
-                    className="
-                      mt-1
-                      break-words
-                      text-sm
-                      leading-6
-                      text-gray-800
-                    "
-                  >
+                    <p className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Reason for Ban
+                    </p>
+                  </div>
+
+                  <p className="mt-3 break-words text-sm leading-6 text-gray-700">
                     {accountModeration?.reason ||
                       'No reason was provided.'}
                   </p>
                 </div>
-
               </div>
 
-              {/* =================================================
-                  NOTICE
-              ================================================= */}
+              {/* NOTICE */}
 
               <p
                 className="
-                  mt-5
-                  text-center
-                  text-xs
-                  leading-5
-                  text-gray-500
+                  mt-5 text-center text-xs
+                  leading-5 text-gray-500
                 "
               >
                 If you believe this action was made in error,
-                please contact Alavaren Auto Electrical.
+                please contact Alavaren Auto Electrical
+                for assistance.
               </p>
 
-              {/* =================================================
-                  LOGOUT
-              ================================================= */}
+              {/* GRADIENT LOGOUT BUTTON */}
 
               <button
                 type="button"
                 onClick={logout}
                 className="
-                  mt-5
-                  flex
-                  w-full
-                  items-center
-                  justify-center
-                  gap-2
+                  group mt-5 flex w-full
+                  items-center justify-center gap-2.5
                   rounded-xl
-                  bg-gray-900
-                  px-4
-                  py-3
-                  text-sm
-                  font-bold
-                  text-white
-                  shadow-sm
-                  transition
-                  hover:bg-gray-800
-                  active:bg-gray-700
+                  bg-gradient-to-r
+                  from-red-700 via-red-700 to-red-950
+                  px-5 py-3.5
+                  text-sm font-bold text-white
+                  shadow-lg shadow-red-700/20
+                  transition duration-200
+                  hover:-translate-y-0.5
+                  hover:from-red-800 hover:to-red-950
+                  hover:shadow-xl
+                  active:translate-y-0
+                  active:scale-[0.99]
+                  focus:outline-none focus:ring-4
+                  focus:ring-red-200
                 "
               >
-                <FaSignOutAlt />
-
+                <FaSignOutAlt className="transition-transform group-hover:translate-x-0.5" />
                 Logout
               </button>
-
             </div>
           </div>
         </div>
       )}
+
 
       {userRole === 'customer' && layoutUser && !isBanned && (
         <WelcomeEnvelope

@@ -20,6 +20,12 @@ import {
   FaUserCog,
   FaBolt,
   FaWrench,
+  FaTools,
+  FaBoxes,
+  FaEdit,
+  FaExclamationTriangle,
+  FaTimesCircle,
+  FaPlus,
 } from 'react-icons/fa'
 import { CalendarDays, Package, Wrench, Users, ShieldAlert} from "lucide-react";
 import {
@@ -68,6 +74,34 @@ Pencil,
   Footprints,
   UserRound,
 } from "lucide-react"
+
+
+
+
+function ActivityThumb({ url, name, theme }) {
+  return (
+    <div className="relative shrink-0">
+      {url ? (
+        <img
+          src={url}
+          alt={name}
+          loading="lazy"
+          className="h-12 w-12 rounded-xl border border-slate-200 bg-white object-contain shadow-sm sm:h-14 sm:w-14"
+        />
+      ) : (
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-slate-300 sm:h-14 sm:w-14">
+          <Package className="h-5 w-5" />
+        </div>
+      )}
+
+      <span
+        className={`absolute -bottom-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full shadow-sm ring-2 ring-white ${theme.iconBox}`}
+      >
+        <theme.Icon className="h-3 w-3" strokeWidth={2.5} />
+      </span>
+    </div>
+  )
+}
 
 function AutoOpenOnView({ onOpen, enabled }) {
   const ref = useRef(null);
@@ -164,7 +198,8 @@ const autoOpenAiNotice = (appt) => {
 
 
   const [recentAppointments, setRecentAppointments] = useState([])
-  const [lowStockItems, setLowStockItems] = useState([])
+    const [lowStockItems, setLowStockItems] = useState([])
+  const [allInventory, setAllInventory] = useState([])
   const [recentInventoryActivity, setRecentInventoryActivity] = useState([])
   const [notifications, setNotifications] = useState([])
   const notificationSoundRef = useRef(null)
@@ -291,6 +326,19 @@ const goToNextServiceTask = () => {
 
 
 const [inventoryActivityIndex, setInventoryActivityIndex] = useState(0);
+
+const getActivityImage = (activity) => {
+  const match =
+    allInventory.find(
+      (inv) =>
+        activity.inventory_id &&
+        String(inv.id) === String(activity.inventory_id)
+    ) ||
+    allInventory.find((inv) => inv.name === activity.item_name)
+
+  return match?.image_url || null
+}
+
 
 
 
@@ -735,6 +783,7 @@ async function fetchAttachments(appointmentId) {
       )
 
       setLowStockItems(lowStock)
+      setAllInventory(inventoryData)
 
       // =====================================================
       // NOTIFICATIONS
@@ -1212,8 +1261,12 @@ console.log("🔐 AUTH ERROR:", authError)
   )
 
  
+const isRejection =
+  status === "cancelled" &&
+  cancellationType === "rejected"
+
 const updateData = {
-  status,
+  status: isRejection ? "rejected" : status,
 }
 
 // =====================================================
@@ -1281,18 +1334,11 @@ if (status === "completed") {
   // =====================================================
 
   // Add timestamp when appointment/service is cancelled
-// =====================================================
-// CANCELLED / REJECTED
-// =====================================================
 
 if (status === "cancelled") {
 
   const cancelledAt =
     new Date().toISOString()
-
-  // Always save cancellation timestamp
-  updateData.cancelled_at =
-    cancelledAt
 
   // ===================================================
   // REJECTED BY ADMIN
@@ -1320,10 +1366,14 @@ if (status === "cancelled") {
 
  else if (cancellationType === "cancelled") {
 
+  updateData.cancelled_at =
+    cancelledAt
+
   if (reason?.trim()) {
     updateData.cancellation_reason =
       reason.trim()
   }
+ 
 
   console.log(
     "Appointment cancelled normally:",
@@ -2521,7 +2571,7 @@ async function loadAdminConversationMap(appointments) {
 
 
 
-
+const historyStatus = isRejection ? "rejected" : status
 
 if (user) {
   const statusMessages = {
@@ -2536,6 +2586,11 @@ if (user) {
 
     completed:
       "Your vehicle service has been completed.",
+    
+      rejected:
+  reason?.trim()
+    ? `Your appointment was rejected. Reason: ${reason.trim()}`
+    : "Your appointment was rejected.",
 
     cancelled:
       reason?.trim()
@@ -2550,10 +2605,10 @@ if (user) {
   .from("appointment_progress_history")
   .insert({
     appointment_id: appointment.id,
-    status: status,
-    message:
-      statusMessages[status] ||
-      `Appointment status changed to ${status}.`,
+   status: historyStatus,
+message:
+  statusMessages[historyStatus] ||
+  `Appointment status changed to ${historyStatus}.`,
     changed_by: user.id,
     changed_by_name: adminProfile?.name || null,
     changed_by_role: "admin",
@@ -4436,9 +4491,14 @@ case "booking_status":
   })
   break
 
-    case "inventory":
+        case "inventory":
     case "low_stock":
-      navigate("/admin/inventory")
+            navigate("/admin/inventory", {
+        state: {
+          inventoryId: notification.inventory_id,
+          highlightStatus: getInventoryStatus(notification),
+        },
+      })
       break
 
    case "message":
@@ -7143,14 +7203,48 @@ const getNotificationStatus = (notification) => {
 };
 
 const getInventoryStatus = (notification) => {
+  const title = (notification.title || "").toLowerCase();
   const text = `${notification.title || ""} ${notification.message || ""}`.toLowerCase();
 
-  if (/\b(delete|deleted|removed)\b/.test(text)) return "rejected";   // red
-  if (text.includes("restock")) return "approved";                    // green
-  if (/\b(used|deducted|consumed)\b/.test(text)) return "cancelled";  // orange
-  if (text.includes("update")) return "updated";                      // blue
+  // Check the TITLE first so the message wording can't confuse it
+  if (title.includes("out of stock")) return "rejected";     // red
+  if (title.includes("low stock")) return "lowstock";        // yellow
+  if (title.includes("new inventory")) return "newitem";     // purple
+  if (title.includes("stock used")) return "cancelled";      // orange
+  if (title.includes("restock")) return "approved";          // green
+  if (title.includes("deleted")) return "rejected";          // red
+  if (title.includes("updated")) return "updated";           // blue
+
+  // Fallback for older notifications saved before this change
+  if (/\b(delete|deleted|removed)\b/.test(text)) return "rejected";
+  if (text.includes("restock")) return "approved";
+  if (/\b(used|deducted|consumed)\b/.test(text)) return "cancelled";
+  if (text.includes("update")) return "updated";
 
   return null;
+};
+
+const getInventoryIcon = (notification) => {
+  const title = (notification.title || "").toLowerCase();
+  const text = `${notification.title || ""} ${notification.message || ""}`.toLowerCase();
+  const cls = "text-sm sm:text-base";
+
+  // Title first, same as the colors
+  if (title.includes("out of stock")) return <FaTimesCircle className={cls} />;
+  if (title.includes("low stock")) return <FaExclamationTriangle className={cls} />;
+  if (title.includes("new inventory")) return <FaPlus className={cls} />;
+  if (title.includes("stock used")) return <FaTools className={cls} />;
+  if (title.includes("restock")) return <FaBoxes className={cls} />;
+  if (title.includes("deleted")) return <FaTrashAlt className={cls} />;
+  if (title.includes("updated")) return <FaEdit className={cls} />;
+
+  // Fallback for older notifications
+  if (/\b(delete|deleted|removed)\b/.test(text)) return <FaTrashAlt className={cls} />;
+  if (text.includes("restock")) return <FaBoxes className={cls} />;
+  if (/\b(used|deducted|consumed)\b/.test(text)) return <FaTools className={cls} />;
+  if (text.includes("update")) return <FaEdit className={cls} />;
+
+  return <FaBoxOpen className={cls} />;
 };
 
   
@@ -7211,7 +7305,7 @@ const notificationStatusStyles = {
     dot: "bg-blue-600",
     text: "text-blue-600",
   },
-    updated: {
+        updated: {
     icon: "bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 ring-blue-200/50",
     rowUnread: "bg-blue-50/70 hover:bg-blue-50",
     rowRead: "bg-blue-50/30 hover:bg-blue-50/60",
@@ -7219,7 +7313,24 @@ const notificationStatusStyles = {
     dot: "bg-blue-600",
     text: "text-blue-600",
   },
+  lowstock: {
+    icon: "bg-gradient-to-br from-yellow-50 to-yellow-100 text-yellow-600 ring-yellow-200/50",
+    rowUnread: "bg-yellow-50/70 hover:bg-yellow-50",
+    rowRead: "bg-yellow-50/30 hover:bg-yellow-50/60",
+    bar: "from-yellow-400 to-yellow-600",
+    dot: "bg-yellow-500",
+    text: "text-yellow-600",
+  },
+  newitem: {
+    icon: "bg-gradient-to-br from-purple-50 to-purple-100 text-purple-600 ring-purple-200/50",
+    rowUnread: "bg-purple-50/70 hover:bg-purple-50",
+    rowRead: "bg-purple-50/30 hover:bg-purple-50/60",
+    bar: "from-purple-500 to-purple-700",
+    dot: "bg-purple-600",
+    text: "text-purple-600",
+  },
 };
+
 
 const getInventoryActionTheme = (action) => {
   const a = String(action || "").toLowerCase();
@@ -7328,7 +7439,106 @@ const formatLongDate = (value) => {
   })
 }
 
+useEffect(() => {
+  const el = quickActionsScrollRef.current
+  if (!el) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
+  const SPEED = 30          // pixels per second (lower = slower)
+  const RESUME_DELAY = 2500 // ms after touch/wheel before it moves again
+
+  let raf
+  let last = performance.now()
+  let pos = el.scrollLeft
+  let dir = 1
+  let paused = false
+  let timer
+
+  const pause = () => {
+    paused = true
+    clearTimeout(timer)
+  }
+
+  const resume = (delay = RESUME_DELAY) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      pos = el.scrollLeft
+      paused = false
+    }, delay)
+  }
+
+  const onEnter = (e) => { if (e.pointerType === 'mouse') pause() }
+  const onLeave = (e) => { if (e.pointerType === 'mouse') resume(600) }
+  const onDown = (e) => { if (e.pointerType !== 'mouse') pause() }
+  const onUp = (e) => { if (e.pointerType !== 'mouse') resume() }
+  const onWheel = () => { pause(); resume() }
+
+  const tick = (now) => {
+    const dt = Math.min((now - last) / 1000, 0.1)
+    last = now
+
+    const max = el.scrollWidth - el.clientWidth
+
+    if (!paused && max > 0) {
+      pos += dir * SPEED * dt
+
+      if (pos >= max) { pos = max; dir = -1 }
+      else if (pos <= 0) { pos = 0; dir = 1 }
+
+      el.scrollLeft = pos
+    }
+
+    raf = requestAnimationFrame(tick)
+  }
+
+  el.addEventListener('pointerenter', onEnter)
+  el.addEventListener('pointerleave', onLeave)
+  el.addEventListener('pointerdown', onDown)
+  el.addEventListener('pointerup', onUp)
+  el.addEventListener('pointercancel', onUp)
+  el.addEventListener('wheel', onWheel, { passive: true })
+
+  raf = requestAnimationFrame(tick)
+
+  return () => {
+    cancelAnimationFrame(raf)
+    clearTimeout(timer)
+    el.removeEventListener('pointerenter', onEnter)
+    el.removeEventListener('pointerleave', onLeave)
+    el.removeEventListener('pointerdown', onDown)
+    el.removeEventListener('pointerup', onUp)
+    el.removeEventListener('pointercancel', onUp)
+    el.removeEventListener('wheel', onWheel)
+  }
+}, [])
+
+
+useEffect(() => {
+  const el = quickActionsScrollRef.current
+  if (!el) return
+
+  const onWheel = (e) => {
+    // horizontal trackpad swipes already work natively
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+
+    const max = el.scrollWidth - el.clientWidth
+    if (max <= 0) return
+
+    const dy = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY
+    const goingRight = dy > 0
+    const atStart = el.scrollLeft <= 0
+    const atEnd = el.scrollLeft >= max - 1
+
+    // at either end, let the page scroll normally
+    if ((goingRight && atEnd) || (!goingRight && atStart)) return
+
+    e.preventDefault()
+    el.scrollLeft += dy
+  }
+
+  el.addEventListener('wheel', onWheel, { passive: false })
+  return () => el.removeEventListener('wheel', onWheel)
+}, [])
 
   // =========================================================
   // RENDER
@@ -8032,7 +8242,7 @@ const notificationStatus = isInventoryUpdate
 
 ) : isInventory ? (
 
-  <FaBoxOpen className="text-sm sm:text-base" />
+  getInventoryIcon(notification)
 
 ) : (
 
@@ -13924,45 +14134,7 @@ onClick={() => {
 
     <div
       ref={quickActionsScrollRef}
-      onWheel={(e) => {
-        const container = e.currentTarget
-
-        // Normal mouse wheels produce vertical deltaY.
-        // Let horizontal trackpad gestures (deltaX) stay native
-        // so they remain smooth and do not fight this handler.
-        if (
-          container.scrollWidth > container.clientWidth &&
-          Math.abs(e.deltaY) > Math.abs(e.deltaX)
-        ) {
-          e.preventDefault()
-
-          const firstCard = container.querySelector(
-            "[data-quick-action-card]"
-          )
-
-          if (!firstCard) return
-
-          const cardWidth = firstCard.offsetWidth
-          const gap = 12
-          const step = cardWidth + gap
-
-          const currentIndex = Math.round(
-            container.scrollLeft / step
-          )
-
-          const direction = e.deltaY > 0 ? 1 : -1
-
-          const nextIndex = Math.max(
-            0,
-            Math.min(9, currentIndex + direction)
-          )
-
-          container.scrollTo({
-            left: nextIndex * step,
-            behavior: "smooth",
-          })
-        }
-      }}
+      
 
       onScroll={(e) => {
         const container = e.currentTarget
@@ -13993,26 +14165,25 @@ onClick={() => {
 
       }}
       className="
-        flex
-        w-full
-        min-w-0
-        gap-3
-        overflow-x-auto
-        overflow-y-hidden
-        pb-3
-        pt-1
-        pr-1
-        snap-x
-        snap-mandatory
-        overscroll-x-contain
-        touch-pan-x
-        [-ms-overflow-style:none]
-        [scrollbar-width:none]
-        [&::-webkit-scrollbar]:hidden
+  flex
+  w-full
+  min-w-0
+  gap-3
+  overflow-x-auto
+  overflow-y-hidden
+  pb-4
+  pt-3
+  px-2
+  overscroll-x-contain
+  touch-pan-x
+  [-ms-overflow-style:none]
+  [scrollbar-width:none]
+  [&::-webkit-scrollbar]:hidden
+  [&_[data-quick-action-card]:hover]:scale-[1.03]
 
-        sm:gap-4
-        sm:pb-4
-      "
+  sm:gap-4
+  sm:pb-4
+"
       style={{
         WebkitOverflowScrolling: "touch",
       }}
@@ -17582,7 +17753,7 @@ rejected: {
     CANCELLED / REJECTED — ARCHIVE + DELETE
 ===================================================== */}
 
-{appt.status === "cancelled" && (
+{["cancelled", "rejected"].includes(appt.status) && (
 
   <div className="mt-5 flex w-full items-center justify-end gap-2 pb-1 sm:mt-6">
 
@@ -20974,38 +21145,46 @@ INVENTORY ITEMS
 
           <div className="flex min-w-0 items-center gap-3 sm:gap-4">
 
-            {/* STATUS ICON */}
-            <div
-              className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm ring-1 sm:h-12 sm:w-12 ${
-                Number(item.quantity) === 0
-                  ? "bg-gradient-to-br from-red-100 to-rose-50 text-red-600 ring-red-200"
-                  : "bg-gradient-to-br from-amber-100 to-yellow-50 text-amber-600 ring-amber-200"
-              }`}
-            >
+                       {/* ITEM PHOTO */}
+            <div className="relative shrink-0">
 
-              <div
-                className={`absolute inset-0 rounded-xl opacity-30 blur-lg ${
-                  Number(item.quantity) === 0
-                    ? "bg-red-400"
-                    : "bg-amber-400"
-                }`}
-              />
-
-              {Number(item.quantity) === 0 ? (
-
-                <AlertCircle
-                  className="relative h-5 w-5 sm:h-5.5 sm:w-5.5"
-                  strokeWidth={2.5}
+              {item.image_url ? (
+                <img
+                  src={item.image_url}
+                  alt={item.name}
+                  loading="lazy"
+                  className={`h-14 w-14 rounded-xl border bg-white object-contain shadow-sm sm:h-16 sm:w-16 ${
+                    Number(item.quantity) === 0
+                      ? "border-red-200"
+                      : "border-amber-200"
+                  }`}
                 />
-
               ) : (
-
-                <AlertTriangle
-                  className="relative h-5 w-5 sm:h-5.5 sm:w-5.5"
-                  strokeWidth={2.5}
-                />
-
+                <div
+                  className={`flex h-14 w-14 items-center justify-center rounded-xl border shadow-sm sm:h-16 sm:w-16 ${
+                    Number(item.quantity) === 0
+                      ? "border-red-200 bg-red-50 text-red-300"
+                      : "border-amber-200 bg-amber-50 text-amber-300"
+                  }`}
+                >
+                  <Package className="h-6 w-6" />
+                </div>
               )}
+
+              {/* STATUS BADGE ON THE CORNER */}
+              <span
+                className={`absolute -bottom-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full text-white shadow-sm ring-2 ring-white ${
+                  Number(item.quantity) === 0
+                    ? "bg-red-500"
+                    : "bg-amber-500"
+                }`}
+              >
+                {Number(item.quantity) === 0 ? (
+                  <AlertCircle className="h-3 w-3" strokeWidth={3} />
+                ) : (
+                  <AlertTriangle className="h-3 w-3" strokeWidth={3} />
+                )}
+              </span>
 
             </div>
 
@@ -21350,11 +21529,11 @@ INVENTORY ITEMS
                     <div className="flex items-start gap-3">
 
 
-<div
-  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${theme.iconBox}`}
->
-  <theme.Icon className="h-5 w-5" strokeWidth={2.2} />
-</div>
+<ActivityThumb
+  url={getActivityImage(activity)}
+  name={activity.item_name}
+  theme={theme}
+/>
 
                       <div className="min-w-0 flex-1">
 
@@ -21636,11 +21815,11 @@ INVENTORY ITEMS
 
                   {/* ACTIVITY ICON */}
 
-                 <div
-  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${theme.iconBox}`}
->
-  <theme.Icon className="h-5 w-5" strokeWidth={2.2} />
-</div>
+             <ActivityThumb
+  url={getActivityImage(activity)}
+  name={activity.item_name}
+  theme={theme}
+/>
 
                   {/* ITEM INFORMATION */}
 
@@ -22024,7 +22203,22 @@ INVENTORY ITEMS
           <div className="pointer-events-none absolute -right-10 -top-14 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
           <div className="pointer-events-none absolute -bottom-16 left-1/3 h-32 w-32 rounded-full bg-indigo-300/10 blur-2xl" />
 
-          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+
+            {/* ITEM PHOTO */}
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white p-1.5 shadow-lg ring-2 ring-white/40 sm:h-24 sm:w-24">
+              {getActivityImage(selectedInventoryActivity) ? (
+                <img
+                  src={getActivityImage(selectedInventoryActivity)}
+                  alt={selectedInventoryActivity.item_name}
+                  className="h-full w-full rounded-xl object-contain"
+                />
+              ) : (
+                <Package className="h-8 w-8 text-slate-300" />
+              )}
+            </div>
 
             <div className="min-w-0">
 
@@ -22036,9 +22230,11 @@ INVENTORY ITEMS
                 {selectedInventoryActivity.item_name}
               </h3>
 
-              <p className={`mt-1 text-xs font-medium ${selectedActivityTheme.heroSub}`}>
+                            <p className={`mt-1 text-xs font-medium ${selectedActivityTheme.heroSub}`}>
                 Inventory activity record
               </p>
+
+            </div>
 
             </div>
 

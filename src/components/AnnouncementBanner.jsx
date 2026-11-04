@@ -763,14 +763,7 @@ export default function AnnouncementBanner() {
             "
           >
 
-            <span
-              className="
-                text-sm
-                leading-none
-              "
-            >
-              📢
-            </span>
+           
 
             Show Announcement
 
@@ -808,14 +801,50 @@ export default function AnnouncementBanner() {
 
   return (
 
-    <section
-      className="
-        relative
-        mb-6
-        w-full
-        touch-pan-y
-      "
-    >
+    
+<section
+  className="
+    relative
+    mb-6
+    w-full
+    touch-pan-y
+  "
+>
+  {/* OUTSIDE ANNOUNCEMENT — TOP RIGHT */}
+<div className="mb-2 flex w-full justify-end">
+  <button
+    type="button"
+    onClick={() => setIsHidden(true)}
+    aria-label="Hide announcement"
+    className="
+      inline-flex
+      items-center
+      gap-1.5
+      rounded-full
+      border
+      border-white/20
+      bg-white/70
+      px-3
+      py-1.5
+      text-xs
+      font-semibold
+      text-black/70
+      shadow-lg
+      backdrop-blur-md
+      transition-all
+      duration-200
+      hover:bg-white/85
+      active:scale-95
+    "
+  >
+    <span className="text-sm leading-none">×</span>
+    Hide
+  </button>
+</div>
+
+  
+
+      
 
       {/* =====================================================
           PREMIUM CONTAINER
@@ -827,7 +856,7 @@ export default function AnnouncementBanner() {
           w-full
           overflow-hidden
           rounded-2xl
-          bg-slate-950
+          bg-white
           shadow-xl
           shadow-slate-900/10
           ring-1
@@ -914,7 +943,7 @@ export default function AnnouncementBanner() {
             items-center
             justify-center
             overflow-hidden
-            bg-slate-950
+            bg-white
             sm:min-h-[380px]
             lg:min-h-[460px]
           "
@@ -936,7 +965,7 @@ export default function AnnouncementBanner() {
                   flex
                   items-center
                   justify-center
-                  bg-slate-900
+                  bg-slate-300
                 "
               >
 
@@ -1252,50 +1281,6 @@ export default function AnnouncementBanner() {
           />
 
 
-          {/* =================================================
-              ANNOUNCEMENT BADGE
-          ================================================= */}
-
-          <div
-            className="
-              absolute
-              left-3
-              top-3
-              z-30
-              inline-flex
-              items-center
-              gap-2
-              rounded-full
-              border
-              border-white/20
-              bg-black/45
-              px-3
-              py-1.5
-              text-xs
-              font-medium
-              text-white
-              shadow-lg
-              backdrop-blur-md
-              sm:left-5
-              sm:top-5
-              sm:text-sm
-            "
-          >
-
-            <span
-              className="
-                h-2
-                w-2
-                rounded-full
-                bg-blue-400
-                shadow-[0_0_10px_rgba(96,165,250,0.9)]
-              "
-            />
-
-            Announcement
-
-          </div>
-
 
           {/* =================================================
               COUNTER
@@ -1334,61 +1319,7 @@ export default function AnnouncementBanner() {
           )}
 
 
-          {/* =================================================
-              HIDE BUTTON
-              Positioned below the counter so it does not
-              interfere with video fullscreen controls.
-          ================================================= */}
-
-          <button
-            type="button"
-            onClick={() => {
-
-              setIsHidden(true)
-
-            }}
-            aria-label="Hide announcement"
-            className="
-              absolute
-              right-3
-              top-14
-              z-40
-              inline-flex
-              items-center
-              gap-1.5
-              rounded-full
-              border
-              border-white/20
-              bg-black/45
-              px-3
-              py-1.5
-              text-xs
-              font-semibold
-              text-white
-              shadow-lg
-              backdrop-blur-md
-              transition-all
-              duration-200
-              hover:bg-black/60
-              active:scale-95
-              sm:right-5
-              sm:top-16
-            "
-          >
-
-            <span
-              className="
-                text-sm
-                leading-none
-              "
-            >
-              ×
-            </span>
-
-            Hide
-
-          </button>
-
+          
 
           {/* =================================================
               CONTENT
@@ -1469,18 +1400,20 @@ export default function AnnouncementBanner() {
 
         <div
           className="
-            relative
-            z-30
-            flex
-            items-center
-            justify-between
-            gap-3
-            bg-slate-950
-            px-3
-            py-3
-            sm:px-5
-            sm:py-4
-          "
+  relative
+  z-30
+  flex
+  items-center
+  justify-between
+  gap-3
+  border-t
+  border-slate-200
+  bg-white
+  px-3
+  py-3
+  sm:px-5
+  sm:py-4
+"
         >
 
           {/* =================================================
@@ -1497,25 +1430,25 @@ export default function AnnouncementBanner() {
             }
             aria-label="Previous announcement"
             className="
-              flex
-              h-10
-              w-10
-              flex-shrink-0
-              items-center
-              justify-center
-              rounded-full
-              border
-              border-white/10
-              bg-white/5
-              text-xl
-              text-white
-              transition-all
-              duration-200
-              hover:bg-white/10
-              active:scale-95
-              disabled:cursor-not-allowed
-              disabled:opacity-30
-            "
+  flex
+  h-10
+  w-10
+  flex-shrink-0
+  items-center
+  justify-center
+  rounded-full
+  border
+  border-slate-200
+  bg-white
+  text-xl
+  text-slate-700
+  transition-all
+  duration-200
+  hover:bg-slate-100
+  active:scale-95
+  disabled:cursor-not-allowed
+  disabled:opacity-30
+"
           >
 
             ‹
@@ -1561,25 +1494,24 @@ export default function AnnouncementBanner() {
                     }`
                   }
                   className={`
-                    h-1.5
-                    shrink-0
-                    rounded-full
-                    transition-all
-                    duration-300
-                    ${
-                      index ===
-                      currentIndex
-                        ? `
-                          w-7
-                          bg-white
-                        `
-                        : `
-                          w-1.5
-                          bg-white/30
-                          hover:bg-white/60
-                        `
-                    }
-                  `}
+  h-1.5
+  shrink-0
+  rounded-full
+  transition-all
+  duration-300
+  ${
+    index === currentIndex
+      ? `
+        w-7
+        bg-gray-600
+      `
+      : `
+        w-1.5
+        bg-gray-300
+        hover:bg-gray-500
+      `
+  }
+`}
                 />
 
               )
@@ -1602,25 +1534,25 @@ export default function AnnouncementBanner() {
             }
             aria-label="Next announcement"
             className="
-              flex
-              h-10
-              w-10
-              flex-shrink-0
-              items-center
-              justify-center
-              rounded-full
-              border
-              border-white/10
-              bg-white/5
-              text-xl
-              text-white
-              transition-all
-              duration-200
-              hover:bg-white/10
-              active:scale-95
-              disabled:cursor-not-allowed
-              disabled:opacity-30
-            "
+  flex
+  h-10
+  w-10
+  flex-shrink-0
+  items-center
+  justify-center
+  rounded-full
+  border
+  border-slate-200
+  bg-white
+  text-xl
+  text-slate-700
+  transition-all
+  duration-200
+  hover:bg-slate-100
+  active:scale-95
+  disabled:cursor-not-allowed
+  disabled:opacity-30
+"
           >
 
             ›
@@ -1652,6 +1584,7 @@ export default function AnnouncementBanner() {
 
       )}
 
-    </section>
+      
+</section>
   )
 }

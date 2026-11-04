@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import toast, { Toaster } from 'react-hot-toast'
 import {
   FaBoxOpen,
@@ -19,20 +19,151 @@ import {
   FaTimes,
   FaCube,
   FaChartLine,
+  FaImage,
+  FaCamera,
+  FaEye,
+  FaTrashAlt,
 } from 'react-icons/fa'
 
+const BUCKET = 'inventory-images'
+
+// Shrinks big phone photos before upload (faster + saves storage)
+async function compressImage(file, maxSize = 800) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+
+    img.onload = () => {
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url)
+          resolve(blob || file)
+        },
+        'image/jpeg',
+        0.8
+      )
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve(file)
+    }
+
+    img.src = url
+  })
+}
+
+async function uploadItemImage(file) {
+  const blob = await compressImage(file)
+  const path = `items/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
+
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, blob, { contentType: 'image/jpeg', upsert: false })
+
+  if (error) throw error
+
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path)
+
+  return { image_url: data.publicUrl, image_path: path }
+}
+
+async function removeItemImage(path) {
+  if (!path) return
+
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .remove([path])
+
+  console.log('Storage remove:', { path, data, error })
+
+  if (error) {
+    toast.error('Image delete error: ' + error.message)
+    return
+  }
+
+  if (!data || data.length === 0) {
+    toast.error('Photo was not deleted from storage (check policies).')
+  }
+}
+
+function getPathFromUrl(url) {
+  return url ? url.split(`/${BUCKET}/`)[1] : null
+}
+
+// Thumbnail with placeholder icon when there's no photo
+function ItemThumb({ item, onView }) {
+  const overlay = (
+    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-black/50 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+      <FaEye className="text-xl sm:text-2xl" />
+      <span className="text-[11px] sm:text-xs font-semibold">View</span>
+    </div>
+  )
+
+  if (item.image_url) {
+    return (
+      <div className="w-24 sm:w-32 shrink-0">
+        <div
+          onClick={() => onView(item.image_url)}
+          title="View details"
+          className="group relative inline-block max-w-full cursor-pointer"
+        >
+          <img
+            src={item.image_url}
+            alt={item.name}
+            loading="lazy"
+            className="block h-auto w-auto max-h-24 sm:max-h-32 max-w-full rounded-xl border border-gray-200"
+          />
+          {overlay}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      onClick={() => onView(item.image_url)}
+      title="View details"
+      className="group relative h-24 w-24 sm:h-32 sm:w-32 shrink-0 cursor-pointer rounded-xl border border-gray-200 bg-gray-100 text-gray-400 flex items-center justify-center text-2xl"
+    >
+      <FaCube />
+      {overlay}
+    </div>
+  )
+}
+
+// Highlight colors, matching the admin notification colors
+const highlightStyles = {
+  rejected: 'bg-red-100 ring-red-500',        // Out of Stock
+  lowstock: 'bg-yellow-100 ring-yellow-500',  // Low Stock Alert
+  cancelled: 'bg-orange-100 ring-orange-500', // Stock Used
+  approved: 'bg-green-100 ring-green-500',    // Restocked
+  updated: 'bg-blue-100 ring-blue-500',       // Updated
+  newitem: 'bg-purple-100 ring-purple-500',   // New item
+}
+
 export default function Inventory() {
-  const navigate = useNavigate()
+    const navigate = useNavigate()
+  const location = useLocation()
+    const [highlightId, setHighlightId] = useState(null)
+  const [highlightStatus, setHighlightStatus] = useState(null)
 
   const MAX_STOCK = 100
 
 
-  const emptyForm = {
+    const emptyForm = {
     name: '',
     category: '',
     quantity: '',
     price: '',
     low_stock_threshold: '',
+    description: '',
   }
 
   const [items, setItems] = useState([])
@@ -49,6 +180,17 @@ export default function Inventory() {
   const [isSaving, setIsSaving] = useState(false)
   const [isUsingStock, setIsUsingStock] = useState(false)
   const [isRestocking, setIsRestocking] = useState(false)
+
+  const [imageFile, setImageFile] = useState(null)
+  const [imagePreview, setImagePreview] = useState(null)
+  const [removeImage, setRemoveImage] = useState(false)
+  const [viewImage, setViewImage] = useState(null)
+  const [viewItem, setViewItem] = useState(null)
+  const [statusFilter, setStatusFilter] = useState('all')
+
+
+
+
 
   useEffect(() => {
     fetchItems()
@@ -86,19 +228,41 @@ export default function Inventory() {
       if (!userProfile) return
 
       const initialQuantity = Number(form.quantity || 0)
+            if (Number(form.low_stock_threshold || 0) < 0) {
+        toast.error('Low Stock Alert cannot be below 0.')
+        return
+      }
+            if (Number(form.price || 0) < 0) {
+        toast.error('Price cannot be below 0.')
+        return
+      }
 
       if (!editingItem && initialQuantity > MAX_STOCK) {
         toast.error(`Stock cannot exceed ${MAX_STOCK} items.`)
         return
       }
 
-      const newItem = {
-        name: form.name,
-        category: form.category,
-        quantity: initialQuantity,
-        price: Number(form.price || 0),
-        low_stock_threshold: Number(form.low_stock_threshold || 0),
-      }
+      // Upload image first (optional)
+let imageData = {}
+
+if (imageFile) {
+  try {
+    imageData = await uploadItemImage(imageFile)
+  } catch (err) {
+    toast.error('Image upload failed: ' + err.message)
+    return
+  }
+}
+
+const newItem = {
+  name: form.name,
+  category: form.category,
+  quantity: initialQuantity,
+  price: Number(form.price || 0),
+  low_stock_threshold: Number(form.low_stock_threshold || 0),
+  description: form.description.trim() || null,
+  ...imageData,
+}
 
       console.log('Editing Item:', editingItem)
       console.log('Current User:', userProfile)
@@ -134,15 +298,38 @@ export default function Inventory() {
         }
 
         // Update inventory item
-        const { error } = await supabase
-          .from('inventory')
-          .update({
-            name: form.name,
-            category: form.category,
-            price: Number(form.price),
-            low_stock_threshold: Number(form.low_stock_threshold),
-          })
-          .eq('id', editingItem.id)
+                const updates = {
+  name: form.name,
+  category: form.category,
+  price: Number(form.price),
+  low_stock_threshold: Number(form.low_stock_threshold),
+  description: form.description.trim() || null,
+}
+
+if (imageFile) {
+  updates.image_url = imageData.image_url
+  updates.image_path = imageData.image_path
+} else if (removeImage) {
+  updates.image_url = null
+  updates.image_path = null
+}
+
+const { error } = await supabase
+  .from('inventory')
+  .update(updates)
+  .eq('id', editingItem.id)
+
+if (error) {
+  console.error('Update Error:', error)
+  toast.error(error.message)
+  await removeItemImage(imageData.image_path) // clean up the new upload
+  return
+}
+
+// Delete the OLD image file if it was replaced or removed
+if ((imageFile || removeImage) && editingItem.image_path) {
+  await removeItemImage(editingItem.image_path)
+}
 
         if (error) {
           console.error('Update Error:', error)
@@ -185,7 +372,8 @@ const { error: notificationError } = await supabase
   .insert([
     {
       type: 'inventory',
-      title: 'Inventory Updated',
+            title: 'Inventory Updated',
+      inventory_id: editingItem.id,
       message: `${form.name} information was updated by ${
         userProfile.name || userProfile.role
       }.`,
@@ -231,16 +419,18 @@ if (notificationError) {
         .single()
 
       if (error) {
-        console.error('Restock Error:', error)
+  await removeItemImage(imageData.image_path) // <-- ADD THIS LINE
 
-        if (error.code === '23514') {
-          toast.error(`Stock cannot exceed ${MAX_STOCK} items.`)
-        } else {
-          toast.error(error.message)
-        }
+  console.error('Add Error:', error)
 
-        return
-      }
+  if (error.code === '23514') {
+    toast.error(`Stock cannot exceed ${MAX_STOCK} items.`)
+  } else {
+    toast.error(error.message)
+  }
+
+  return
+}
 
       // RECORD INVENTORY ACTIVITY
       const { error: transactionError } = await supabase
@@ -351,10 +541,15 @@ if (notificationError) {
 
     const deletedItem = data?.[0]
 
-    if (!deletedItem) {
-      toast.error('Item could not be deleted.')
-      return
-    }
+if (!deletedItem) {
+  toast.error('Item could not be deleted.')
+  return
+}
+
+// Delete the photo from storage too
+await removeItemImage(
+  deletedItem.image_path || getPathFromUrl(deletedItem.image_url)
+)
 
     // Record DELETE activity
     const { error: transactionError } = await supabase
@@ -471,6 +666,7 @@ if (notificationError) {
         .insert([
           {
             item_name: selectedItem.name,
+                        inventory_id: selectedItem.id,
             action: 'Used',
             quantity: qty,
             remaining_stock: remaining,
@@ -487,68 +683,56 @@ if (notificationError) {
         console.error('Use Transaction Error:', transactionError)
       }
 
-      // NOTIFICATION
+
+
+
+
       // =====================================================
-// ADMIN NOTIFICATION — STOCK USED
-// =====================================================
+      // ADMIN NOTIFICATION — STOCK USED / LOW STOCK / OUT OF STOCK
+      // (only ONE notification is sent, based on what is left)
+      // =====================================================
 
-const { error: notificationError } = await supabase
-  .from('notifications')
-  .insert([
-    {
-      type: 'inventory',
+      const isOutOfStock = remaining === 0
+      const isLowStock =
+        remaining > 0 && remaining <= selectedItem.low_stock_threshold
 
-      title:
-        remaining <= selectedItem.low_stock_threshold
-          ? 'Low Stock Alert'
-          : 'Stock Used',
+      const who = userProfile.name || userProfile.role
 
-      message:
-        remaining <= selectedItem.low_stock_threshold
-          ? `${selectedItem.name} is low on stock (${remaining} left). Used by ${
-              userProfile.name || userProfile.role
-            }.`
-          : `${qty} ${selectedItem.name} used by ${
-              userProfile.name || userProfile.role
-            }. ${remaining} remaining.`,
+      let notifTitle = 'Stock Used'
+      let notifMessage = `${qty} unit${qty === 1 ? '' : 's'} of ${
+        selectedItem.name
+      } used by ${who}. Stock updated from ${selectedItem.quantity} to ${remaining}.`
 
-      is_read: false,
+      if (isOutOfStock) {
+        notifTitle = 'Out of Stock'
+        notifMessage = `${selectedItem.name} is now out of stock. The last ${qty} unit${
+          qty === 1 ? '' : 's'
+        } was used by ${who}.`
+      } else if (isLowStock) {
+        notifTitle = 'Low Stock Alert'
+        notifMessage = `${selectedItem.name} is running low (${remaining} left). ${qty} unit${
+          qty === 1 ? '' : 's'
+        } used by ${who}.`
+      }
 
-      // IMPORTANT:
-      // Notification belongs to the admin
-      // who performed this inventory action.
-      recipient_id: userProfile.id,
+      const { error: notificationError } = await supabase
+        .from('notifications')
+        .insert([
+          {
+            type: 'inventory',
+            title: notifTitle,
+            inventory_id: selectedItem.id,
+            message: notifMessage,
+            is_read: false,
+            recipient_id: userProfile.id,
+          },
+        ])
 
-    },
-  ])
-
-if (notificationError) {
-  console.error(
-    '❌ Use Stock Notification Error:',
-    notificationError
-  )
-}
-
-
-      // EXTRA LOW / OUT OF STOCK NOTIFICATION
-      if (remaining <= selectedItem.low_stock_threshold) {
-        await supabase
-          .from('notifications')
-          .insert([
-            {
-              title:
-                remaining === 0
-                  ? 'Out of Stock'
-                  : 'Low Stock',
-
-              message: `${selectedItem.name} has only ${remaining} remaining after being used by ${
-                userProfile.name || userProfile.role
-              }.`,
-
-              type: 'inventory',
-              is_read: false,
-            },
-          ])
+      if (notificationError) {
+        console.error(
+          '❌ Use Stock Notification Error:',
+          notificationError
+        )
       }
 
       toast.success('Stock updated successfully!')
@@ -625,6 +809,7 @@ if (notificationError) {
         .insert([
           {
             item_name: selectedItem.name,
+                        inventory_id: selectedItem.id,
             action: 'Restocked',
             quantity: qty,
             remaining_stock: remaining,
@@ -657,11 +842,15 @@ const { error: notificationError } = await supabase
   .from('notifications')
   .insert([
     {
-      type: 'inventory',
-      title: 'Item Restocked',
-      message: `${selectedItem.name} was restocked by ${
+            type: 'inventory',
+            title: 'Item Restocked',
+      inventory_id: selectedItem.id,
+      message: `${qty} unit${qty === 1 ? '' : 's'} of ${
+        selectedItem.name
+      } added by ${
         userProfile.name || userProfile.role
-      }.`,
+      }. Stock updated from ${selectedItem.quantity} to ${remaining}.`,
+
       is_read: false,
 
       // IMPORTANT:
@@ -692,24 +881,32 @@ if (notificationError) {
     }
   }
 
-  function getStatus(item) {
+        function getStatus(item) {
     if (item.quantity === 0)
       return {
         text: 'Out of Stock',
         color: 'bg-red-100 text-red-700',
+        bar: 'bg-red-500',
+        Icon: FaTimesCircle,
       }
 
     if (item.quantity <= item.low_stock_threshold)
       return {
         text: 'Low Stock',
         color: 'bg-yellow-100 text-yellow-700',
+        bar: 'bg-yellow-500',
+        Icon: FaExclamationTriangle,
       }
 
     return {
       text: 'In Stock',
       color: 'bg-green-100 text-green-700',
+      bar: 'bg-green-500',
+      Icon: FaCheckCircle,
     }
   }
+
+
 
   const lowStockItems = items.filter(
     (item) =>
@@ -748,38 +945,134 @@ if (notificationError) {
     return userProfile
   }
 
-  function handleCancel() {
-    setShowForm(false)
-    setEditingItem(null)
-    setForm(emptyForm)
+  function handleImageSelect(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    toast.error('Please choose an image file.')
+    return
   }
 
-  const filteredItems = items.filter(
-    (item) =>
-      item.name
-        .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      item.category
-        .toLowerCase()
-        .includes(search.toLowerCase())
-  )
+  if (file.size > 10 * 1024 * 1024) {
+    toast.error('Image must be under 10MB.')
+    return
+  }
+
+  setImageFile(file)
+  setImagePreview(URL.createObjectURL(file))
+  setRemoveImage(false)
+}
+
+function handleRemoveImage() {
+  setImageFile(null)
+  setImagePreview(null)
+  setRemoveImage(true)
+}
+
+function openEdit(item) {
+  setEditingItem(item)
+    setForm({
+    name: item.name || '',
+    category: item.category || '',
+    quantity: item.quantity || '',
+    price: item.price || '',
+    low_stock_threshold: item.low_stock_threshold || '',
+    description: item.description || '',
+  })
+  setImageFile(null)
+  setImagePreview(item.image_url || null)
+  setRemoveImage(false)
+  setShowForm(true)
+}
+
+function handleCancel() {
+  setShowForm(false)
+  setEditingItem(null)
+  setForm(emptyForm)
+  setImageFile(null)
+  setImagePreview(null)
+  setRemoveImage(false)
+}
+  const formTheme = editingItem
+    ? {
+        icon: 'bg-blue-50 text-blue-600',
+        border: 'border-t-blue-600',
+        ring: 'focus:border-blue-500 focus:ring-blue-500',
+        button: 'bg-blue-600 hover:bg-blue-700',
+      }
+    : {
+        icon: 'bg-purple-50 text-purple-600',
+        border: 'border-t-purple-600',
+        ring: 'focus:border-purple-500 focus:ring-purple-500',
+        button: 'bg-purple-600 hover:bg-purple-700',
+      }
+
+    const viewStatus = viewItem ? getStatus(viewItem) : null
+
+  const viewStockPercent = viewItem
+    ? Math.min(100, Math.round((viewItem.quantity / MAX_STOCK) * 100))
+    : 0
+
+  const inStockCount =
+    items.length - lowStockItems.length - outOfStockItems.length
+
+  const filteredItems = items.filter((item) => {
+    const matchesSearch =
+      item.name?.toLowerCase().includes(search.toLowerCase()) ||
+      item.category?.toLowerCase().includes(search.toLowerCase())
+
+    const isOut = item.quantity === 0
+    const isLow =
+      item.quantity > 0 && item.quantity <= item.low_stock_threshold
+
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'out' && isOut) ||
+      (statusFilter === 'low' && isLow) ||
+      (statusFilter === 'in' && !isOut && !isLow)
+
+    return matchesSearch && matchesStatus
+  })
 
   useEffect(() => {
-  const isModalOpen = showUseDialog || showRestockDialog
+    const id = location.state?.inventoryId
+    if (!id || items.length === 0) return
 
-  if (!isModalOpen) return
+    // make sure search/filter can't hide the item
+    setSearch('')
+    setStatusFilter('all')
+       setHighlightId(id)
+    setHighlightStatus(location.state?.highlightStatus || null)
 
-  const prevBody = document.body.style.overflow
-  const prevHtml = document.documentElement.style.overflow
+    setTimeout(() => {
+      document
+        .getElementById(`inventory-item-${id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 200)
 
-  document.body.style.overflow = 'hidden'
-  document.documentElement.style.overflow = 'hidden'
+    setTimeout(() => setHighlightId(null), 3500)
 
-  return () => {
-    document.body.style.overflow = prevBody
-    document.documentElement.style.overflow = prevHtml
-  }
-}, [showUseDialog, showRestockDialog])
+    // clear the state so a page refresh doesn't highlight again
+    navigate(location.pathname, { replace: true, state: null })
+  }, [items, location.state])
+
+    useEffect(() => {
+    const isModalOpen = showUseDialog || showRestockDialog || viewItem
+
+    if (!isModalOpen) return
+
+    const prevBody = document.body.style.overflow
+    const prevHtml = document.documentElement.style.overflow
+
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = prevBody
+      document.documentElement.style.overflow = prevHtml
+    }
+  }, [showUseDialog, showRestockDialog, viewItem])
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] text-gray-900">
@@ -1003,10 +1296,13 @@ if (notificationError) {
                 {/* Add */}
                 <button
                   onClick={() => {
-                    setShowForm(true)
-                    setEditingItem(null)
-                    setForm(emptyForm)
-                  }}
+  setShowForm(true)
+  setEditingItem(null)
+  setForm(emptyForm)
+  setImageFile(null)
+  setImagePreview(null)
+  setRemoveImage(false)
+}}
                   className="group flex items-center justify-center gap-2 bg-red-700 hover:bg-red-800 active:scale-[0.98] text-white px-5 py-2.5 rounded-lg font-semibold text-sm shadow-sm hover:shadow-md transition-all whitespace-nowrap"
                 >
                   <FaPlus className="transition-transform group-hover:rotate-90" />
@@ -1017,6 +1313,72 @@ if (notificationError) {
 
             </div>
 
+          </div>
+
+                    {/* ================= FILTER CHIPS ================= */}
+
+          <div className="flex flex-wrap gap-2 mb-5 sm:mb-6">
+            {[
+              {
+                key: 'all',
+                label: 'All',
+                count: items.length,
+                dot: 'bg-gray-400',
+                active: 'border-gray-900 bg-gray-900 text-white',
+              },
+              {
+                key: 'in',
+                label: 'In Stock',
+                count: inStockCount,
+                dot: 'bg-green-500',
+                active: 'border-green-600 bg-green-600 text-white',
+              },
+              {
+                key: 'low',
+                label: 'Low Stock',
+                count: lowStockItems.length,
+                dot: 'bg-yellow-500',
+                active: 'border-yellow-500 bg-yellow-500 text-white',
+              },
+              {
+                key: 'out',
+                label: 'Out of Stock',
+                count: outOfStockItems.length,
+                dot: 'bg-red-500',
+                active: 'border-red-600 bg-red-600 text-white',
+              },
+            ].map((chip) => {
+              const isActive = statusFilter === chip.key
+
+              return (
+                <button
+                  key={chip.key}
+                  type="button"
+                  onClick={() => setStatusFilter(chip.key)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-all active:scale-95 ${
+                    isActive
+                      ? `${chip.active} shadow-sm`
+                      : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:border-gray-300'
+                  }`}
+                >
+                  {!isActive && (
+                    <span className={`h-2 w-2 rounded-full ${chip.dot}`} />
+                  )}
+
+                  {chip.label}
+
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                      isActive
+                        ? 'bg-white/20 text-white'
+                        : 'bg-gray-100 text-gray-500'
+                    }`}
+                  >
+                    {chip.count}
+                  </span>
+                </button>
+              )
+            })}
           </div>
 
           {/* ================= ALERTS ================= */}
@@ -1108,13 +1470,13 @@ if (notificationError) {
 
           {showForm && (
             <form
-              onSubmit={handleAdd}
-              className="bg-white rounded-2xl shadow-lg border border-gray-200 p-4 sm:p-6 mb-6 animate-[fadeIn_.2s_ease-out]"
+                           onSubmit={handleAdd}
+              className={`bg-white rounded-2xl shadow-lg border border-gray-200 border-t-4 ${formTheme.border} p-4 sm:p-6 mb-6 animate-[fadeIn_.2s_ease-out]`}
             >
 
               <div className="flex items-start gap-3 mb-5 sm:mb-6">
 
-                <div className="w-10 h-10 shrink-0 rounded-xl bg-red-50 text-red-700 flex items-center justify-center">
+                                <div className={`w-10 h-10 shrink-0 rounded-xl ${formTheme.icon} flex items-center justify-center`}>
                   {editingItem ? <FaEdit /> : <FaPlus />}
                 </div>
 
@@ -1136,8 +1498,56 @@ if (notificationError) {
 
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+              
 
+              <div className="flex flex-col sm:flex-row gap-5 sm:gap-6">
+
+                {/* Photo (left side) */}
+                <div className="sm:w-40 shrink-0">
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-2">
+                    Photo <span className="font-normal text-gray-400">(optional)</span>
+                  </label>
+
+                  {imagePreview ? (
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className="mx-auto block h-auto w-auto max-h-40 max-w-full rounded-xl border border-gray-200"
+                      />
+                  ) : (
+                    <div className="mx-auto h-32 w-32 sm:h-40 sm:w-40 rounded-xl bg-gray-100 text-gray-400 flex items-center justify-center text-3xl">                      <FaImage />
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap justify-center gap-2 mt-3">
+                    <label className="cursor-pointer inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold transition">
+                      <FaCamera />
+                      {imagePreview ? 'Change' : 'Add Photo'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageSelect}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {imagePreview && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveImage}
+                        className="inline-flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-700 px-4 py-2 rounded-lg text-sm font-semibold transition"
+                      >
+                        <FaTrash />
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Fields (right side) */}
+                <div className="flex-1 min-w-0">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
                 {(editingItem
                   ? [
                       ['name', 'Item Name'],
@@ -1167,8 +1577,10 @@ if (notificationError) {
                           ? 'number'
                           : 'text'
                       }
-                      min={
-                        field === 'quantity'
+                                            min={
+                        field === 'quantity' ||
+                        field === 'price' ||
+                        field === 'low_stock_threshold'
                           ? 0
                           : undefined
                       }
@@ -1177,8 +1589,21 @@ if (notificationError) {
                           ? MAX_STOCK
                           : undefined
                       }
-                      className="w-full border border-gray-300 p-3 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all hover:border-gray-400"
+                      className={`w-full border border-gray-300 p-3 rounded-lg text-sm focus:outline-none focus:ring-2 ${formTheme.ring} transition-all hover:border-gray-400`}
                       placeholder={label}
+                                            onKeyDown={(e) => {
+                        const isNumberField =
+                          field === 'quantity' ||
+                          field === 'price' ||
+                          field === 'low_stock_threshold'
+
+                        if (
+                          isNumberField &&
+                          ['-', '+', 'e', 'E'].includes(e.key)
+                        ) {
+                          e.preventDefault()
+                        }
+                      }}
                       value={form[field]}
                       onChange={(e) =>
                         setForm({
@@ -1193,6 +1618,31 @@ if (notificationError) {
 
               </div>
 
+              {/* Optional Description */}
+<div className="mt-4 sm:mt-5">
+  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-2">
+    Description <span className="font-normal text-gray-400">(optional)</span>
+  </label>
+
+  <textarea
+    rows={3}
+    maxLength={200}
+        className={`w-full border border-gray-300 p-3 rounded-lg text-sm focus:outline-none focus:ring-2 ${formTheme.ring} transition-all hover:border-gray-400 resize-none`}
+    placeholder="Example: Fits Toyota Vios 2014-2020"
+    value={form.description}
+    onChange={(e) =>
+      setForm({ ...form, description: e.target.value })
+    }
+  />
+
+  <p className="text-[11px] text-gray-400 mt-1 text-right">
+    {form.description.length}/200
+  </p>
+</div>
+                </div>
+              </div>
+
+              
               <div className="flex flex-col sm:flex-row gap-3 mt-5 sm:mt-6">
 
                 <button
@@ -1201,7 +1651,7 @@ if (notificationError) {
                   className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold transition-all active:scale-[0.98] ${
                     isSaving
                       ? 'bg-gray-400 cursor-not-allowed text-white'
-                      : 'bg-red-700 hover:bg-red-800 hover:shadow-md text-white'
+                      : `${formTheme.button} hover:shadow-md text-white`
                   }`}
                 >
                   {isSaving ? (
@@ -1241,8 +1691,8 @@ if (notificationError) {
 
                 <div className="flex items-start gap-3 mb-5">
 
-                  <div className="w-11 h-11 shrink-0 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center text-lg shadow-sm">
-                    <FaWrench />
+                                    <div className="w-11 h-11 shrink-0 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center text-lg shadow-sm">
+                    <FaTools />
                   </div>
 
                   <div className="min-w-0">
@@ -1263,7 +1713,13 @@ if (notificationError) {
 
                   <div className="absolute -right-5 -top-5 w-20 h-20 rounded-full bg-orange-100/50" />
 
-                  <div className="relative">
+                  <div className="absolute -right-5 -top-5 w-20 h-20 rounded-full bg-orange-100/50" />
+
+<div className="absolute right-2 top-2 h-10 w-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
+  <FaBoxOpen />
+</div>
+
+<div className="relative">
 
                     <div className="flex items-center gap-2 text-xs text-gray-500">
                       <FaCube className="text-orange-500" />
@@ -1274,23 +1730,37 @@ if (notificationError) {
                       {selectedItem?.name}
                     </p>
 
-                    <div className="mt-4 flex items-center justify-between gap-4">
+                    <div className="mt-4">
+  <p className="text-xs text-gray-500">Available Stock</p>
 
-                      <div>
-                        <p className="text-xs text-gray-500">
-                          Available Stock
-                        </p>
+  <p className="font-bold text-orange-600 text-lg">
+    {selectedItem?.quantity}
+    <span className="text-xs font-semibold text-gray-400">
+      /{MAX_STOCK}
+    </span>
+  </p>
 
-                        <p className="font-bold text-orange-600 text-lg">
-                          {selectedItem?.quantity}
-                        </p>
-                      </div>
-
-                      <div className="h-10 w-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
-                        <FaBoxes />
-                      </div>
-
-                    </div>
+  {selectedItem && (
+    <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-100">
+      <div
+        className={`h-full rounded-full transition-all duration-500 ${getStatus(selectedItem).bar}`}
+        style={{
+          width: `${
+            selectedItem.quantity > 0
+              ? Math.max(
+                  Math.min(
+                    100,
+                    Math.round((selectedItem.quantity / MAX_STOCK) * 100)
+                  ),
+                  3
+                )
+              : 0
+          }%`,
+        }}
+      />
+    </div>
+  )}
+</div>
 
                   </div>
 
@@ -1383,7 +1853,11 @@ if (notificationError) {
 
                   <div className="absolute -right-5 -top-5 w-20 h-20 rounded-full bg-green-100/50" />
 
-                  <div className="relative">
+<div className="absolute right-2 top-2 h-10 w-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+  <FaWarehouse />
+</div>
+
+<div className="relative">
 
                     <div className="flex items-center gap-2 text-xs text-gray-500">
                       <FaCube className="text-green-500" />
@@ -1394,27 +1868,46 @@ if (notificationError) {
                       {selectedItem?.name}
                     </p>
 
-                    <div className="mt-4 flex items-center justify-between gap-4">
 
-                      <div>
-                        <p className="text-xs text-gray-500">
-                          Current Stock
-                        </p>
 
-                        <p className="font-bold text-green-600 text-lg">
-                          {selectedItem?.quantity} / {MAX_STOCK}
-                        </p>
 
-                        <p className="text-[11px] text-gray-500 mt-1">
-                          Maximum stock: {MAX_STOCK}
-                        </p>
-                      </div>
+                    <div className="mt-4">
+  <p className="text-xs text-gray-500">Current Stock</p>
 
-                      <div className="h-10 w-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
-                        <FaWarehouse />
-                      </div>
+  <div className="flex items-end justify-between gap-3">
+  <p className="font-bold text-green-600 text-lg">
+    {selectedItem?.quantity}
+    <span className="text-xs font-semibold text-gray-400">
+      /{MAX_STOCK}
+    </span>
+  </p>
 
-                    </div>
+  <p className="text-[11px] text-gray-500 pb-1">
+    Maximum stock: {MAX_STOCK}
+  </p>
+</div>
+
+  {selectedItem && (
+    <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-100">
+      <div
+        className={`h-full rounded-full transition-all duration-500 ${getStatus(selectedItem).bar}`}
+        style={{
+          width: `${
+            selectedItem.quantity > 0
+              ? Math.max(
+                  Math.min(
+                    100,
+                    Math.round((selectedItem.quantity / MAX_STOCK) * 100)
+                  ),
+                  3
+                )
+              : 0
+          }%`,
+        }}
+      />
+    </div>
+  )}
+</div>
 
                   </div>
 
@@ -1529,418 +2022,395 @@ if (notificationError) {
             </div>
 
             {/* ================= MOBILE CARDS ================= */}
-            <div className="block md:hidden">
+            {filteredItems.length === 0 ? (
+  <div className="p-10 text-center">
+    <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-gray-100 text-gray-400 flex items-center justify-center text-2xl">
+      <FaBoxOpen />
+    </div>
 
-              {filteredItems.length === 0 ? (
+    <p className="font-semibold text-gray-700">
+      {items.length === 0
+        ? 'No inventory items yet'
+        : 'No matching items'}
+    </p>
 
-                <div className="p-10 text-center">
+    <p className="text-sm text-gray-400 mt-1">
+      {items.length === 0
+        ? 'Add your first inventory item to get started.'
+        : 'Try changing your search.'}
+    </p>
+  </div>
+) : (
+  <div className="divide-y divide-gray-100">
+    {filteredItems.map((item) => {
+      const status = getStatus(item)
+        const stockPercent = Math.min(
+        100,
+        Math.round((item.quantity / MAX_STOCK) * 100)
+      )
 
-                  <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-gray-100 text-gray-400 flex items-center justify-center text-2xl">
-                    <FaBoxOpen />
-                  </div>
+      return (
+        <div
+                    key={item.id}
+          id={`inventory-item-${item.id}`}
+          className={`p-4 sm:p-5 transition-colors hover:bg-gray-50 ${
+                        highlightId === item.id
+              ? `${highlightStyles[highlightStatus] || highlightStyles.rejected} ring-2 ring-inset animate-pulse`
+              : item.quantity === 0
+              ? 'bg-red-50/40'
 
-                  <p className="font-semibold text-gray-700">
-                    {items.length === 0
-                      ? 'No inventory items yet'
-                      : 'No matching items'}
-                  </p>
+              : item.quantity <= item.low_stock_threshold
+              ? 'bg-yellow-50/40'
+              : 'bg-white'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
 
-                  <p className="text-sm text-gray-400 mt-1">
-                    {items.length === 0
-                      ? 'Add your first inventory item to get started.'
-                      : 'Try changing your search.'}
-                  </p>
+            <div className="flex items-start gap-4 flex-1 min-w-0">
 
+              <ItemThumb
+                item={item}
+                onView={() => setViewItem(item)}
+              />
+
+              <div className="min-w-0 flex-1">
+
+                <div className="flex items-center gap-2 min-w-0">
+                  <h4 className="font-bold text-gray-900 truncate min-w-0">
+                    {item.name}
+                  </h4>
+
+                                    <span
+                    className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-bold ${status.color}`}
+                  >
+                    <status.Icon className="text-[10px] sm:text-xs" />
+                    {status.text}
+                  </span>
+                                  
                 </div>
 
-              ) : (
+                {item.category && (
+                  <span className="inline-flex mt-1 bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[11px] font-semibold">
+                    {item.category}
+                  </span>
+                )}
 
-                <div className="divide-y divide-gray-100">
+                <div className="flex items-start gap-6 mt-3">
+  <div className="w-24 sm:w-28">
+    <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+      Stock
+    </p>
 
-                  {filteredItems.map((item) => {
+    <p className="font-bold text-gray-900">
+      {item.quantity}
+      <span className="text-xs font-semibold text-gray-400">
+        /{MAX_STOCK}
+      </span>
+    </p>
 
-                    const status = getStatus(item)
+    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+      <div
+        className={`h-full rounded-full transition-all duration-500 ${status.bar}`}
+        style={{
+          width: `${
+            item.quantity > 0 ? Math.max(stockPercent, 3) : 0
+          }%`,
+        }}
+      />
+    </div>
+  </div>
 
-                    return (
-                      <div
-                        key={item.id}
-                        className={`p-4 transition-colors ${
-                          item.quantity === 0
-                            ? 'bg-red-50/40'
-                            : item.quantity <=
-                              item.low_stock_threshold
-                            ? 'bg-yellow-50/40'
-                            : 'bg-white'
-                        }`}
-                      >
-
-                        {/* Card Top */}
-                        <div className="flex items-start justify-between gap-3">
-
-                          <div className="flex items-start gap-3 min-w-0">
-
-                            <div className="h-11 w-11 shrink-0 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center">
-                              <FaCube />
-                            </div>
-
-                            <div className="min-w-0">
-
-                              <h4 className="font-bold text-gray-900 truncate">
-                                {item.name}
-                              </h4>
-
-                              <span className="inline-flex mt-1 bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[10px] font-semibold">
-                                {item.category}
-                              </span>
-
-                            </div>
-
-                          </div>
-
-                          <span
-                            className={`shrink-0 inline-flex px-2.5 py-1 rounded-full text-[10px] font-bold ${status.color}`}
-                          >
-                            {status.text}
-                          </span>
-
-                        </div>
-
-                        {/* Stats */}
-                        <div className="grid grid-cols-2 gap-3 mt-4">
-
-                          <div className="rounded-xl bg-white/80 border border-gray-200 p-3">
-                            <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
-                              Quantity
-                            </p>
-
-                            <p className="font-bold text-gray-900 mt-1">
-                              {item.quantity}
-                            </p>
-                          </div>
-
-                          <div className="rounded-xl bg-white/80 border border-gray-200 p-3">
-                            <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
-                              Price
-                            </p>
-
-                            <p className="font-bold text-gray-900 mt-1">
-                              ₱
-                              {Number(
-                                item.price
-                              ).toLocaleString()}
-                            </p>
-                          </div>
-
-                        </div>
-
-                        {/* Actions */}
-                        <div className="grid grid-cols-2 gap-2 mt-3">
-
-                          <button
-                            onClick={() => {
-                              setEditingItem(item)
-
-                              setForm({
-                                name: item.name || '',
-                                category:
-                                  item.category || '',
-                                quantity:
-                                  item.quantity || '',
-                                price:
-                                  item.price || '',
-                                low_stock_threshold:
-                                  item.low_stock_threshold ||
-                                  '',
-                              })
-
-                              setShowForm(true)
-                            }}
-                            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white px-3 py-2.5 rounded-lg font-semibold text-xs transition-all"
-                          >
-                            <FaEdit />
-                            Edit
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setSelectedItem(item)
-                              setUsedQuantity(1)
-                              setShowUseDialog(true)
-                            }}
-                            className="flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 active:scale-[0.98] text-white px-3 py-2.5 rounded-lg font-semibold text-xs transition-all"
-                          >
-                            <FaTools />
-                            Use
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setSelectedItem(item)
-                              setRestockQuantity(1)
-                              setShowRestockDialog(true)
-                            }}
-                            className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 active:scale-[0.98] text-white px-3 py-2.5 rounded-lg font-semibold text-xs transition-all"
-                          >
-                            <FaBoxes />
-                            Restock
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              handleDelete(item.id)
-                            }
-                            className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white px-3 py-2.5 rounded-lg font-semibold text-xs transition-all"
-                          >
-                            <FaTrash />
-                            Delete
-                          </button>
-
-                        </div>
-
-                      </div>
-                    )
-                  })}
-
-                </div>
-
-              )}
-
+  <div>
+    <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+      Price
+    </p>
+    <p className="font-bold text-gray-900">
+      ₱{Number(item.price).toLocaleString()}
+    </p>
+  </div>
+</div>
+              </div>
             </div>
 
-            {/* ================= DESKTOP TABLE ================= */}
-            <div className="hidden md:block overflow-x-auto">
 
-              <table className="w-full">
+            <div className="flex flex-col sm:items-end gap-3">
 
-                <thead className="bg-[#151515] text-white">
+              
 
-                  <tr>
-                    {[
-                      'Name',
-                      'Category',
-                      'Quantity',
-                      'Price',
-                      'Status',
-                      'Actions',
-                    ].map((h) => (
-                      <th
-                        key={h}
-                        className="p-4 text-left text-sm font-semibold whitespace-nowrap"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
+            <div className="grid grid-cols-4 sm:flex gap-2">
 
-                </thead>
+                <button
+                  onClick={() => openEdit(item)}
+                  className="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all"
+                >
+                  <FaEdit />
+                  Edit
+                </button>
 
-                <tbody>
+                <button
+                  onClick={() => {
+                    setSelectedItem(item)
+                    setUsedQuantity(1)
+                    setShowUseDialog(true)
+                  }}
+                  className="flex items-center justify-center gap-1.5 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all"
+                >
+                  <FaTools />
+                  Use
+                </button>
 
-                  {filteredItems.length === 0 ? (
+                <button
+                  onClick={() => {
+                    setSelectedItem(item)
+                    setRestockQuantity(1)
+                    setShowRestockDialog(true)
+                  }}
+                  className="flex items-center justify-center gap-1.5 bg-green-600 hover:bg-green-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all"
+                >
+                  <FaBoxes />
+                  Restock
+                </button>
 
-                    <tr>
-                      <td
-                        colSpan="6"
-                        className="p-12 text-center"
-                      >
+                <button
+                  onClick={() => handleDelete(item.id)}
+                  className="flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all"
+                >
+                  <FaTrashAlt />
+                  Delete
+                </button>
 
-                        <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-gray-100 text-gray-400 flex items-center justify-center text-2xl">
-                          <FaBoxOpen />
-                        </div>
-
-                        <p className="font-semibold text-gray-700">
-                          {items.length === 0
-                            ? 'No inventory items yet'
-                            : 'No matching items'}
-                        </p>
-
-                        <p className="text-sm text-gray-400 mt-1">
-                          {items.length === 0
-                            ? 'Add your first inventory item to get started.'
-                            : 'Try changing your search.'}
-                        </p>
-
-                      </td>
-                    </tr>
-
-                  ) : (
-
-                    filteredItems.map((item) => {
-
-                      const status = getStatus(item)
-
-                      return (
-                        <tr
-                          key={item.id}
-                          className={`border-t border-gray-200 transition-all duration-200 hover:bg-gray-50 ${
-                            item.quantity === 0
-                              ? 'bg-red-50/40'
-                              : item.quantity <=
-                                item.low_stock_threshold
-                              ? 'bg-yellow-50/40'
-                              : ''
-                          }`}
-                        >
-
-                          {/* Name */}
-                          <td className="p-4">
-
-                            <div className="flex items-center gap-3">
-
-                              <div className="h-10 w-10 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center shrink-0">
-                                <FaCube />
-                              </div>
-
-                              <div className="font-bold text-gray-900">
-                                {item.name}
-                              </div>
-
-                            </div>
-
-                          </td>
-
-                          {/* Category */}
-                          <td className="p-4">
-
-                            <span className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full text-xs font-semibold">
-                              {item.category}
-                            </span>
-
-                          </td>
-
-                          {/* Quantity */}
-                          <td className="p-4">
-
-                            <span className="font-bold text-gray-900">
-                              {item.quantity}
-                            </span>
-
-                          </td>
-
-                          {/* Price */}
-                          <td className="p-4">
-
-                            <span className="font-semibold text-gray-800">
-                              ₱
-                              {Number(
-                                item.price
-                              ).toLocaleString()}
-                            </span>
-
-                          </td>
-
-                          {/* Status */}
-                          <td className="p-4">
-
-                            <span
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${status.color}`}
-                            >
-                              {item.quantity === 0 ? (
-                                <FaTimesCircle />
-                              ) : item.quantity <=
-                                item.low_stock_threshold ? (
-                                <FaExclamationTriangle />
-                              ) : (
-                                <FaCheckCircle />
-                              )}
-
-                              {status.text}
-                            </span>
-
-                          </td>
-
-                          {/* Actions */}
-                          <td className="p-4">
-
-                            <div className="flex gap-2 flex-wrap">
-
-                              <button
-                                onClick={() => {
-                                  setEditingItem(item)
-
-                                  setForm({
-                                    name:
-                                      item.name || '',
-                                    category:
-                                      item.category || '',
-                                    quantity:
-                                      item.quantity || '',
-                                    price:
-                                      item.price || '',
-                                    low_stock_threshold:
-                                      item.low_stock_threshold ||
-                                      '',
-                                  })
-
-                                  setShowForm(true)
-                                }}
-                                title="Edit item"
-                                className="group flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-sm transition-all"
-                              >
-                                <FaEdit className="transition-transform group-hover:scale-110" />
-                                Edit
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  setSelectedItem(item)
-                                  setUsedQuantity(1)
-                                  setShowUseDialog(true)
-                                }}
-                                title="Use stock for service repair"
-                                className="group flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-sm transition-all"
-                              >
-                                <FaTools className="transition-transform group-hover:rotate-12" />
-                                Use
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  setSelectedItem(item)
-                                  setRestockQuantity(1)
-                                  setShowRestockDialog(true)
-                                }}
-                                title="Restock item"
-                                className="group flex items-center gap-1.5 bg-green-600 hover:bg-green-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-sm transition-all"
-                              >
-                                <FaBoxes className="transition-transform group-hover:scale-110" />
-                                Restock
-                              </button>
-
-                              <button
-                                onClick={() =>
-                                  handleDelete(
-                                    item.id
-                                  )
-                                }
-                                title="Delete item"
-                                className="group flex items-center gap-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white px-3 py-2 rounded-lg font-semibold text-sm transition-all"
-                              >
-                                <FaTrash className="transition-transform group-hover:scale-110" />
-                                Delete
-                              </button>
-
-                            </div>
-
-                          </td>
-
-                        </tr>
-                      )
-                    })
-
-                  )}
-
-                </tbody>
-
-              </table>
-
+              </div>
             </div>
 
+          </div>
+        </div>
+      )
+    })}
+  </div>
+)}
           </div>
 
         </div>
 
       </main>
+                  {viewItem && (
+        <div
+          onClick={() => setViewItem(null)}
+          className="fixed inset-0 z-[9998] flex items-center justify-center overscroll-contain bg-slate-950/70 px-3 py-4 sm:px-4"        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col md:flex-row w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-2xl bg-white shadow-2xl"
+          >
+
+            {/* ===== LEFT SIDE: photo ===== */}
+            <div className="md:w-[42%] shrink-0 p-3 md:p-4">
+              <div className="flex h-full min-h-[220px] items-center justify-center rounded-2xl bg-gray-100 p-4">
+                {viewItem.image_url ? (
+                  <img
+                    src={viewItem.image_url}
+                    alt={viewItem.name}
+                    onClick={() => setViewImage(viewItem.image_url)}
+                    className="block h-auto w-auto max-h-[40vh] md:max-h-[70vh] max-w-full cursor-pointer rounded-xl hover:opacity-90 transition"
+                  />
+                ) : (
+                  <div className="flex h-32 w-32 items-center justify-center rounded-xl bg-gray-200 text-4xl text-gray-400">
+                    <FaCube />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ===== RIGHT SIDE: details ===== */}
+            <div className="flex-1 min-w-0 overflow-y-auto overscroll-contain p-5 md:p-6">
+
+              {/* Header */}
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">
+                  Item Details
+                </h2>
+
+                <button
+                  onClick={() => setViewItem(null)}
+                  className="shrink-0 text-gray-400 hover:text-gray-700 text-xl"
+                  aria-label="Close"
+                >
+                  <FaTimes />
+                </button>
+              </div>
+
+              {/* Name + status */}
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-xl font-bold text-gray-900 break-words min-w-0">
+                  {viewItem.name}
+                </h3>
+
+                                <span
+                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${viewStatus.color}`}
+                >
+                  <viewStatus.Icon className="text-xs" />
+                  {viewStatus.text}
+                </span>
+              </div>
+
+              {viewItem.category && (
+                <span className="inline-flex mt-2 bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-semibold">
+                  {viewItem.category}
+                </span>
+              )}
+
+              {/* Details grid */}
+              <div className="grid grid-cols-2 gap-3 mt-5">
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+                    Stock
+                  </p>
+                  <p className="font-bold text-gray-900 mt-1">
+                    {viewItem.quantity}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+                    Price
+                  </p>
+                  <p className="font-bold text-gray-900 mt-1">
+                    ₱{Number(viewItem.price || 0).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+                    Low Stock Alert
+                  </p>
+                  <p className="font-bold text-gray-900 mt-1">
+                    {viewItem.low_stock_threshold}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+                    Stock Value
+                  </p>
+                  <p className="font-bold text-gray-900 mt-1">
+                    ₱
+                    {(
+                      Number(viewItem.quantity || 0) *
+                      Number(viewItem.price || 0)
+                    ).toLocaleString()}
+                  </p>
+                </div>
+
+              </div>
+
+                            {/* Stock level bar */}
+              <div className="mt-4 rounded-xl border border-gray-200 p-3">
+
+                <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                  <span>Stock level</span>
+                  <span>
+                    {viewItem.quantity}/{MAX_STOCK}
+                  </span>
+                </div>
+
+                <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${viewStatus.bar}`}
+                    style={{
+                      width: `${
+                        viewItem.quantity > 0
+                          ? Math.max(viewStockPercent, 3)
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+
+              </div>
+
+              {/* Description (only if there is one) */}
+              {viewItem.description && (
+                <div className="mt-4 rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400">
+                    Description
+                  </p>
+                  <p className="text-sm text-gray-700 mt-1 whitespace-pre-wrap break-words">
+                    {viewItem.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Date added */}
+              {viewItem.created_at && (
+                <p className="text-xs text-gray-400 mt-4">
+                  Added on{' '}
+                  {new Date(viewItem.created_at).toLocaleDateString(
+                    'en-PH',
+                    {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      timeZone: 'Asia/Manila',
+                    }
+                  )}
+                  {' at '}
+                  {new Date(viewItem.created_at).toLocaleTimeString(
+                    'en-PH',
+                    {
+                      hour: 'numeric',
+                      minute: '2-digit',
+                      hour12: true,
+                      timeZone: 'Asia/Manila',
+                    }
+                  )}
+                </p>
+              )}
+
+              {/* Buttons */}
+              <div className="flex flex-col-reverse sm:flex-row gap-3 mt-5">
+                <button
+                  onClick={() => setViewItem(null)}
+                  className="flex-1 bg-gray-700 hover:bg-gray-800 active:scale-[0.98] text-white py-3 rounded-lg font-semibold transition-all"
+                >
+                  Close
+                </button>
+
+                <button
+                  onClick={() => {
+                    const itemToEdit = viewItem
+                    setViewItem(null)
+                    openEdit(itemToEdit)
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white py-3 rounded-lg font-semibold transition-all"
+                >
+                  <FaEdit />
+                  Edit
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewImage && (
+  <div
+    onClick={() => setViewImage(null)}
+    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4"
+  >
+    <button
+      className="absolute top-4 right-4 text-white text-2xl"
+      onClick={() => setViewImage(null)}
+    >
+      <FaTimes />
+    </button>
+    <img
+      src={viewImage}
+      alt="Item"
+      className="max-h-[90vh] max-w-full rounded-xl object-contain"
+    />
+  </div>
+)}
 
       {/* Small responsive animation */}
       <style>{`

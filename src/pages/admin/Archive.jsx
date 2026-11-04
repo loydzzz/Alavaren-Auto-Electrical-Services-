@@ -642,6 +642,7 @@ const shouldScrollToBottomRef = useRef(false)
 
   const [activeArchiveCard, setActiveArchiveCard] = useState(0)
   const archiveStatsScrollRef = useRef(null)
+  const archivePauseRef = useRef(null)
   const archiveScrollRafRef = useRef(null)
   const [highlightedAppointmentId, setHighlightedAppointmentId] =
     useState(null)
@@ -1866,7 +1867,7 @@ useEffect(() => {
     },
     {
       key: 'completed',
-      label: 'Completed',
+      label: 'Total Completed',
       description: 'Successfully completed services',
       count: countBy('completed'),
       theme: 'emerald',
@@ -1890,7 +1891,7 @@ useEffect(() => {
     },
     {
       key: 'cancelled',
-      label: 'Cancelled',
+      label: 'Total Cancelled',
       description: 'Cancelled appointments',
       count: countBy('cancelled'),
       theme: 'orange',
@@ -1914,7 +1915,7 @@ useEffect(() => {
     },
     {
       key: 'rejected',
-      label: 'Rejected',
+      label: 'Total Rejected',
       description: 'Rejected appointments',
       count: countBy('rejected'),
       theme: 'red',
@@ -2164,37 +2165,150 @@ useEffect(() => {
   ========================================================= */
 
   const handleArchiveStatsScroll = (e) => {
-    const container = e.currentTarget
+  const container = e.currentTarget
 
-    if (archiveScrollRafRef.current) return
+  if (archiveScrollRafRef.current) return
 
-    archiveScrollRafRef.current = requestAnimationFrame(() => {
-      const cards = Array.from(container.children)
+  archiveScrollRafRef.current = requestAnimationFrame(() => {
+    archiveScrollRafRef.current = null
 
-      if (!cards.length) {
-        archiveScrollRafRef.current = null
-        return
+    const cards = Array.from(container.children)
+    if (!cards.length) return
+
+    const max = container.scrollWidth - container.clientWidth
+
+    // pinned to either end -> first / last dot
+    if (container.scrollLeft <= 2) {
+      setActiveArchiveCard(0)
+      return
+    }
+
+    if (container.scrollLeft >= max - 2) {
+      setActiveArchiveCard(cards.length - 1)
+      return
+    }
+
+    const containerCenter = container.scrollLeft + container.clientWidth / 2
+
+    let closestIndex = 0
+    let closestDistance = Infinity
+
+    cards.forEach((card, index) => {
+      const cardCenter = card.offsetLeft + card.offsetWidth / 2
+      const distance = Math.abs(cardCenter - containerCenter)
+
+      if (distance < closestDistance) {
+        closestDistance = distance
+        closestIndex = index
       }
-
-      const containerCenter = container.scrollLeft + container.clientWidth / 2
-
-      let closestIndex = 0
-      let closestDistance = Infinity
-
-      cards.forEach((card, index) => {
-        const cardCenter = card.offsetLeft + card.offsetWidth / 2
-        const distance = Math.abs(cardCenter - containerCenter)
-
-        if (distance < closestDistance) {
-          closestDistance = distance
-          closestIndex = index
-        }
-      })
-
-      setActiveArchiveCard(Math.max(0, Math.min(STATS.length - 1, closestIndex)))
-      archiveScrollRafRef.current = null
     })
+
+    setActiveArchiveCard(Math.max(0, Math.min(STATS.length - 1, closestIndex)))
+  })
+}
+
+
+
+  useEffect(() => {
+  const el = archiveStatsScrollRef.current
+  if (!el) return
+
+  const SPEED = 30          // pixels per second (lower = slower)
+  const RESUME_DELAY = 2500 // ms before it moves again after touch/wheel/dots
+  const reduceMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)'
+  ).matches
+
+  let raf
+  let last = performance.now()
+  let pos = el.scrollLeft
+  let dir = 1
+  let paused = false
+  let timer
+
+  const pause = () => {
+    paused = true
+    clearTimeout(timer)
   }
+
+  const resume = (delay = RESUME_DELAY) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      pos = el.scrollLeft
+      paused = false
+    }, delay)
+  }
+
+  // lets the dots pause the auto-scroll when tapped
+  archivePauseRef.current = () => {
+    pause()
+    resume()
+  }
+
+  const onEnter = (e) => { if (e.pointerType === 'mouse') pause() }
+  const onLeave = (e) => { if (e.pointerType === 'mouse') resume(600) }
+  const onDown = (e) => { if (e.pointerType !== 'mouse') pause() }
+  const onUp = (e) => { if (e.pointerType !== 'mouse') resume() }
+
+  // mouse wheel -> horizontal scroll (page scrolls normally at the ends)
+  const onWheel = (e) => {
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+
+    const max = el.scrollWidth - el.clientWidth
+    if (max <= 0) return
+
+    const dy = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY
+    const goingRight = dy > 0
+    const atStart = el.scrollLeft <= 0
+    const atEnd = el.scrollLeft >= max - 1
+
+    if ((goingRight && atEnd) || (!goingRight && atStart)) return
+
+    e.preventDefault()
+    pause()
+    resume()
+    el.scrollLeft += dy
+  }
+
+  const tick = (now) => {
+    const dt = Math.min((now - last) / 1000, 0.1)
+    last = now
+
+    const max = el.scrollWidth - el.clientWidth
+
+    if (!paused && max > 0) {
+      pos += dir * SPEED * dt
+
+      if (pos >= max) { pos = max; dir = -1 }
+      else if (pos <= 0) { pos = 0; dir = 1 }
+
+      el.scrollLeft = pos
+    }
+
+    raf = requestAnimationFrame(tick)
+  }
+
+  el.addEventListener('pointerenter', onEnter)
+  el.addEventListener('pointerleave', onLeave)
+  el.addEventListener('pointerdown', onDown)
+  el.addEventListener('pointerup', onUp)
+  el.addEventListener('pointercancel', onUp)
+  el.addEventListener('wheel', onWheel, { passive: false })
+
+  if (!reduceMotion) raf = requestAnimationFrame(tick)
+
+  return () => {
+    cancelAnimationFrame(raf)
+    clearTimeout(timer)
+    archivePauseRef.current = null
+    el.removeEventListener('pointerenter', onEnter)
+    el.removeEventListener('pointerleave', onLeave)
+    el.removeEventListener('pointerdown', onDown)
+    el.removeEventListener('pointerup', onUp)
+    el.removeEventListener('pointercancel', onUp)
+    el.removeEventListener('wheel', onWheel)
+  }
+}, [])
 
   useEffect(() => {
   const isModalOpen =
@@ -2306,22 +2420,17 @@ useEffect(() => {
             <div
               ref={archiveStatsScrollRef}
               onScroll={handleArchiveStatsScroll}
-              onWheel={(e) => {
-                const container = e.currentTarget
 
-                // Vertical mouse wheel -> horizontal scroll
-                if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-                  e.preventDefault()
-                  container.scrollBy({ left: e.deltaY, behavior: 'auto' })
-                }
-              }}
-              className="flex snap-x snap-mandatory gap-4 overflow-x-auto overscroll-x-contain px-1 pb-4 pt-1 scrollbar-none touch-pan-x"
+
+              
+
+
+             className="relative flex gap-4 overflow-x-auto overscroll-x-contain px-2 pb-4 pt-3 scrollbar-none touch-pan-x [&>button:hover]:scale-[1.03]"
               style={{
-                WebkitOverflowScrolling: 'touch',
-                scrollbarWidth: 'none',
-                msOverflowStyle: 'none',
-                scrollBehavior: 'smooth',
-              }}
+  WebkitOverflowScrolling: 'touch',
+  scrollbarWidth: 'none',
+  msOverflowStyle: 'none',
+}}
             >
               {STATS.map((stat) => {
                 const theme = THEMES[stat.theme]
@@ -2386,8 +2495,11 @@ useEffect(() => {
                     type="button"
                     aria-label={`Go to archive statistic ${index + 1}`}
                     onClick={() => {
-                      const card =
-                        archiveStatsScrollRef.current?.children[index]
+  archivePauseRef.current?.()
+
+  const card =
+    archiveStatsScrollRef.current?.children[index]
+  
 
                       if (!card) return
 
@@ -2402,12 +2514,12 @@ useEffect(() => {
                     className="flex h-5 w-5 items-center justify-center rounded-full transition-transform duration-200 active:scale-90"
                   >
                     <span
-                      className={`block rounded-full transition-all duration-300 ease-out ${
-                        activeArchiveCard === index
-                          ? 'h-1.5 w-6 bg-slate-900'
-                          : 'h-1.5 w-1.5 bg-slate-300'
-                      }`}
-                    />
+  className={`block h-1.5 rounded-full transition-all duration-500 ease-out ${
+    activeArchiveCard === index
+      ? 'w-6 bg-slate-900'
+      : 'w-1.5 bg-slate-300'
+  }`}
+/>
                   </button>
                 ))}
               </div>

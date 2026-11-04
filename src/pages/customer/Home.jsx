@@ -193,12 +193,12 @@ case 'cancelled':
  const status = item.status?.toLowerCase()
 
 const isRejected =
-  status === 'cancelled' &&
-  Boolean(appointment?.rejected_at)
+  status === 'rejected' ||
+  (status === 'cancelled' &&
+    Boolean(appointment?.rejected_at))
 
 const isCancelled =
-  status === 'cancelled' &&
-  !isRejected
+  status === 'cancelled' && !isRejected
 
 const displayStatus =
   isRejected
@@ -466,17 +466,19 @@ const previousConversationIdRef = useRef(null)
   // =========================================================
 
   const statusColor = {
-    pending:
-      'border-amber-200 bg-amber-50 text-amber-700',
-    confirmed:
-      'border-emerald-200 bg-emerald-50 text-emerald-700',
-    cancelled:
-      'border-red-200 bg-red-50 text-red-700',
-    completed:
-      'border-blue-200 bg-blue-50 text-blue-700',
-    in_progress:
-      'border-violet-200 bg-violet-50 text-violet-700',
-  }
+  pending:
+    'border-amber-200 bg-amber-50 text-amber-700',
+  confirmed:
+    'border-emerald-200 bg-emerald-50 text-emerald-700',
+  cancelled:
+    'border-orange-200 bg-orange-50 text-orange-700',
+  rejected:
+    'border-red-200 bg-red-50 text-red-700',
+  completed:
+    'border-blue-200 bg-blue-50 text-blue-700',
+  in_progress:
+    'border-violet-200 bg-violet-50 text-violet-700',
+}
 
   // =========================================================
   // UNREAD STORAGE HELPERS
@@ -1465,10 +1467,13 @@ useEffect(() => {
   function getAppointmentMessage(apt) {
     const status =
       apt.status?.toLowerCase()
+if (status === 'rejected') {
+  return 'This appointment was rejected.'
+}
 
-    if (status === 'cancelled') {
-      return 'This appointment was cancelled.'
-    }
+if (status === 'cancelled') {
+  return 'This appointment was cancelled.'
+}
 
     if (status === 'pending') {
       return 'Your appointment request has been received and is waiting for confirmation.'
@@ -6480,70 +6485,62 @@ const arrangementBadge =
                       </div>
                     </div>
 
-                    {/* CANCELLATION */}
+                    {/* CANCELLATION / REJECTION */}
 
-                    {apt.status?.toLowerCase() ===
-                      'cancelled' && (
-
-                      <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
-
-                        <div className="flex items-center gap-2">
-
-                          <CircleX className="h-4 w-4 text-red-600" />
-
-                          <p className="text-sm font-black text-red-700">
-                            Appointment Cancelled
-                          </p>
-
-                        </div>
-
-                        {apt.cancelled_at && (
-                          <p className="mt-2 text-xs text-red-600">
-                            Cancelled:{' '}
-                            {formatDateTime(
-                              apt.cancelled_at
-                            )}
-                          </p>
-                        )}
-
-                       {(
-  apt.rejection_reason ||
-  apt.cancellation_reason
+{['cancelled', 'rejected'].includes(
+  apt.status?.toLowerCase()
 ) && (
-  <div
-    className={`mt-3 w-full min-w-0 overflow-hidden rounded-xl border p-3 sm:p-4 ${
-      apt.rejection_reason
-        ? 'border-red-100 bg-red-50/50'
-        : 'border-orange-100 bg-orange-50/50'
-    }`}
-  >
+  <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
 
-    <p
-      className={`text-[9px] font-black uppercase tracking-wider ${
-        apt.rejection_reason
-          ? 'text-red-500'
-          : 'text-orange-600'
-      }`}
-    >
-      {apt.rejection_reason
-        ? 'Rejection Reason'
-        : 'Cancellation Reason'}
-    </p>
+    <div className="flex items-center gap-2">
+      <CircleX className="h-4 w-4 text-red-600" />
 
-    <p className="mt-1 break-words whitespace-pre-wrap text-sm leading-6 text-slate-700">
-      {apt.rejection_reason ||
-        apt.cancellation_reason}
-    </p>
+      <p className="text-sm font-black text-red-700">
+        {apt.status?.toLowerCase() === 'rejected'
+          ? 'Appointment Rejected'
+          : 'Appointment Cancelled'}
+      </p>
+    </div>
+
+    {(apt.rejected_at || apt.cancelled_at) && (
+      <p className="mt-2 text-xs text-red-600">
+        {apt.status?.toLowerCase() === 'rejected'
+          ? 'Rejected: '
+          : 'Cancelled: '}
+        {formatDateTime(
+          apt.rejected_at || apt.cancelled_at
+        )}
+      </p>
+    )}
+
+    {(apt.rejection_reason || apt.cancellation_reason) && (
+      <div
+        className={`mt-3 w-full min-w-0 overflow-hidden rounded-xl border p-3 sm:p-4 ${
+          apt.rejection_reason
+            ? 'border-red-100 bg-red-50/50'
+            : 'border-orange-100 bg-orange-50/50'
+        }`}
+      >
+        <p
+          className={`text-[9px] font-black uppercase tracking-wider ${
+            apt.rejection_reason
+              ? 'text-red-500'
+              : 'text-orange-600'
+          }`}
+        >
+          {apt.rejection_reason
+            ? 'Rejection Reason'
+            : 'Cancellation Reason'}
+        </p>
+
+        <p className="mt-1 break-words whitespace-pre-wrap text-sm leading-6 text-slate-700">
+          {apt.rejection_reason || apt.cancellation_reason}
+        </p>
+      </div>
+    )}
 
   </div>
 )}
-
-
-
-                      </div>
-
-                    )}
-
                     {/* COMPLETION */}
 
                     {apt.status?.toLowerCase() ===

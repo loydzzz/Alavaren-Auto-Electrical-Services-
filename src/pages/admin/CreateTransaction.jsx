@@ -13,7 +13,8 @@ import {
   Fuel,
   HardHat,
   Hash,
-  MapPin,
+    MapPin,
+  Package,
   Phone,
   Sparkles,
   User,
@@ -374,6 +375,33 @@ function AiDetectionPanel({ appointment }) {
   )
 }
 
+
+
+/* =========================================================
+   PART PHOTO
+========================================================= */
+
+function PartThumb({ url, name, size = 'h-12 w-12' }) {
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={name}
+        loading="lazy"
+        className={`${size} shrink-0 rounded-xl border border-gray-200 bg-gray-50 object-contain`}
+      />
+    )
+  }
+
+  return (
+    <div
+      className={`${size} flex shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-300`}
+    >
+      <Package className="h-5 w-5" />
+    </div>
+  )
+}
+
 /* =========================================================
    PAGE
 ========================================================= */
@@ -585,9 +613,11 @@ export default function CreateTransaction() {
         id,
         name,
         category,
-        quantity,
+                quantity,
         price,
-        low_stock_threshold
+        low_stock_threshold,
+        image_url,
+        description
       `
       )
       .order('name', { ascending: true })
@@ -647,6 +677,46 @@ export default function CreateTransaction() {
     fetchInventoryItems()
     fetchCurrentUser()
   }, [appointmentId])
+
+    // PICK A PART FOR A STOCK ROOM ROW
+  const selectStockItem = (index, inventoryId) => {
+    const inv = inventoryItems.find(
+      (i) => String(i.id) === String(inventoryId)
+    )
+
+    setItems(
+      items.map((row, i) => {
+        if (i !== index) return row
+
+        if (!inv) {
+          return {
+            ...row,
+            inventory_id: null,
+            item_name: '',
+            unit_price: 0,
+            available_stock: 0,
+          }
+        }
+
+        return {
+          ...row,
+          inventory_id: inv.id,
+          item_name: inv.name || '',
+          unit_price: Number(inv.price) || 0,
+          available_stock: Number(inv.quantity) || 0,
+          quantity: 1,
+        }
+      })
+    )
+  }
+
+  // FIND INVENTORY RECORD (by id first, then by name)
+  const findInventory = (inventoryId, name) =>
+    inventoryItems.find(
+      (inv) => String(inv.id) === String(inventoryId)
+    ) ||
+    (name ? inventoryItems.find((inv) => inv.name === name) : null) ||
+    null
 
   // ADD PART
   const addItem = () => {
@@ -1131,6 +1201,163 @@ export default function CreateTransaction() {
                 </button>
               </div>
 
+                            {/* STOCK ROOM — ADDITIONAL PARTS */}
+              <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <div className="mb-4">
+                  <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-900">
+                    <Package className="h-4 w-4" />
+                    Stock Room: Additional Parts
+                  </h4>
+
+                  <p className="mt-1 text-xs text-emerald-700">
+                    Parts added from inventory that the technician did not
+                    record.
+                  </p>
+                </div>
+
+                {items.filter((i) => !i.service_task_item_id).length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-emerald-200 bg-white p-5 text-center">
+                    <p className="text-sm font-medium text-gray-500">
+                      No additional parts yet.
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      Click “+ Add Part” to pick one from inventory.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {items.map((item, index) =>
+                      item.service_task_item_id ? null : (
+                        <div
+                          key={index}
+                          className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm"
+                        >
+                          {/* PHOTO + DROPDOWN */}
+                          <div className="flex items-start gap-3">
+                            <PartThumb
+                              url={
+                                findInventory(item.inventory_id, item.item_name)
+                                  ?.image_url
+                              }
+                              name={item.item_name}
+                              size="h-16 w-16"
+                            />
+
+                            <div className="min-w-0 flex-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                Part Name
+                              </label>
+
+                              <select
+                                value={item.inventory_id || ''}
+                                onChange={(e) =>
+                                  selectStockItem(index, e.target.value)
+                                }
+                                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
+                              >
+                                <option value="">Select inventory item</option>
+
+                                {inventoryItems.map((inventory) => (
+                                  <option
+                                    key={inventory.id}
+                                    value={inventory.id}
+                                    disabled={
+                                      Number(inventory.quantity || 0) <= 0
+                                    }
+                                  >
+                                    {inventory.name}
+                                    {' — Stock: '}
+                                    {Number(inventory.quantity || 0)}
+                                    {' — ₱'}
+                                    {peso(inventory.price)}
+                                  </option>
+                                ))}
+                              </select>
+
+                              {item.inventory_id && (
+                                <p className="mt-1 text-xs text-gray-500">
+                                  Available stock: {item.available_stock}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* QTY / PRICE / SUBTOTAL / REMOVE */}
+                          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:items-end">
+                            <div>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                Quantity
+                              </label>
+
+                              <input
+                                type="number"
+                                min="1"
+                                max={item.available_stock || undefined}
+                                step="1"
+                                value={item.quantity}
+                                onChange={(e) => {
+                                  const value = Number(e.target.value)
+
+                                  if (
+                                    item.available_stock > 0 &&
+                                    value > item.available_stock
+                                  ) {
+                                    updateItem(
+                                      index,
+                                      'quantity',
+                                      item.available_stock
+                                    )
+                                    return
+                                  }
+
+                                  updateItem(index, 'quantity', e.target.value)
+                                }}
+                                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                Unit Price
+                              </label>
+
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.unit_price}
+                                onChange={(e) =>
+                                  updateItem(index, 'unit_price', e.target.value)
+                                }
+                                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                Subtotal
+                              </label>
+
+                              <div className="mt-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-bold text-gray-900">
+                                ₱{peso(getItemSubtotal(item))}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => removeItem(index)}
+                              className="w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-sm font-bold text-red-600 hover:bg-red-100"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* TECHNICIAN USED PARTS */}
               {serviceItems.length > 0 && (
                 <div className="mb-6 mt-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
@@ -1152,14 +1379,24 @@ export default function CreateTransaction() {
                         className="rounded-xl border border-blue-100 bg-white p-4"
                       >
                         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                              Item
-                            </p>
+                                                    <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-1">
+                            <PartThumb
+                              url={
+                                findInventory(item.inventory_id, item.item_name)
+                                  ?.image_url
+                              }
+                              name={item.item_name}
+                            />
 
-                            <p className="mt-1 font-bold text-gray-900">
-                              {item.item_name}
-                            </p>
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                Item
+                              </p>
+
+                              <p className="mt-1 break-words font-bold text-gray-900">
+                                {item.item_name}
+                              </p>
+                            </div>
                           </div>
 
                           <div>
@@ -1210,152 +1447,7 @@ export default function CreateTransaction() {
                 </div>
               )}
 
-              <div className="mt-6 space-y-4">
-                {items.map((item, index) => (
-                  <div
-                    key={index}
-                    className="rounded-xl border border-gray-200 bg-gray-50 p-4"
-                  >
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-12 md:items-end">
-                      {/* ITEM NAME */}
-                      <div className="md:col-span-5">
-                        <label className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                          Part Name
-                        </label>
-
-                        <select
-                          value={item.inventory_id || ''}
-                          onChange={(e) => {
-                            const inventoryId = e.target.value
-
-                            const selectedInventory = inventoryItems.find(
-                              (inventory) =>
-                                String(inventory.id) === String(inventoryId)
-                            )
-
-                            if (!selectedInventory) {
-                              updateItem(index, 'inventory_id', null)
-                              updateItem(index, 'item_name', '')
-                              updateItem(index, 'unit_price', 0)
-                              updateItem(index, 'available_stock', 0)
-                              return
-                            }
-
-                            updateItem(index, 'inventory_id', selectedInventory.id)
-                            updateItem(
-                              index,
-                              'item_name',
-                              selectedInventory.name || ''
-                            )
-                            updateItem(
-                              index,
-                              'unit_price',
-                              Number(selectedInventory.price) || 0
-                            )
-                            updateItem(
-                              index,
-                              'available_stock',
-                              Number(selectedInventory.quantity) || 0
-                            )
-                          }}
-                          className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-900"
-                        >
-                          <option value="">Select inventory item</option>
-
-                          {inventoryItems.map((inventory) => (
-                            <option
-                              key={inventory.id}
-                              value={inventory.id}
-                              disabled={Number(inventory.quantity || 0) <= 0}
-                            >
-                              {inventory.name}
-                              {' — Stock: '}
-                              {Number(inventory.quantity || 0)}
-                              {' — ₱'}
-                              {peso(inventory.price)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* QUANTITY */}
-                      <div className="md:col-span-2">
-                        <label className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                          Quantity
-                        </label>
-
-                        <input
-                          type="number"
-                          min="1"
-                          max={item.available_stock || undefined}
-                          step="1"
-                          value={item.quantity}
-                          onChange={(e) => {
-                            const value = Number(e.target.value)
-
-                            if (
-                              item.available_stock > 0 &&
-                              value > item.available_stock
-                            ) {
-                              updateItem(index, 'quantity', item.available_stock)
-                              return
-                            }
-
-                            updateItem(index, 'quantity', e.target.value)
-                          }}
-                          className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-900"
-                        />
-
-                        {item.inventory_id && (
-                          <p className="mt-1 text-xs text-gray-500">
-                            Available stock: {item.available_stock}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* UNIT PRICE */}
-                      <div className="md:col-span-2">
-                        <label className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                          Unit Price
-                        </label>
-
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={item.unit_price}
-                          onChange={(e) =>
-                            updateItem(index, 'unit_price', e.target.value)
-                          }
-                          className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-900"
-                        />
-                      </div>
-
-                      {/* SUBTOTAL */}
-                      <div className="md:col-span-2">
-                        <label className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                          Subtotal
-                        </label>
-
-                        <div className="mt-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-gray-900">
-                          ₱{peso(getItemSubtotal(item))}
-                        </div>
-                      </div>
-
-                      {/* REMOVE */}
-                      <div className="md:col-span-1">
-                        <button
-                          type="button"
-                          onClick={() => removeItem(index)}
-                          className="w-full rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-bold text-red-600 hover:bg-red-100"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              
             </div>
           </div>
 

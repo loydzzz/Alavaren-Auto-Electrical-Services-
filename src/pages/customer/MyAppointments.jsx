@@ -335,7 +335,24 @@ function getStatusTheme(status) {
   }
 }
 
+// =========================================================
+// EFFECTIVE STATUS
+// Handles new rows (status = 'rejected') and
+// old rows (status = 'cancelled' + rejected_at)
+// =========================================================
 
+function getEffectiveStatus(appointment) {
+  const status = appointment?.status?.toLowerCase()
+
+  if (
+    status === 'rejected' ||
+    (status === 'cancelled' && Boolean(appointment?.rejected_at))
+  ) {
+    return 'rejected'
+  }
+
+  return status
+}
 // =========================================================
 // APPOINTMENT PROGRESS
 // =========================================================
@@ -348,13 +365,10 @@ function AppointmentProgress({ appointment }) {
 
   const status = appointment.status?.toLowerCase()
 
-  const isRejected =
-  status === 'cancelled' &&
-  Boolean(appointment.rejected_at)
+  const effectiveStatus = getEffectiveStatus(appointment)
 
-const isCancelled =
-  status === 'cancelled' &&
-  !isRejected
+const isRejected = effectiveStatus === 'rejected'
+const isCancelled = effectiveStatus === 'cancelled'
 
   const statusTheme = getStatusTheme(status)
 
@@ -1045,13 +1059,14 @@ function AppointmentProgressHistory({
 
   // A rejection is stored as "cancelled" in the history,
   // so use rejected_at from the appointment to distinguish it.
-  const isRejected =
-    itemStatus === 'cancelled' &&
-    Boolean(appointment?.rejected_at)
+ const isRejected =
+  itemStatus === 'rejected' ||
+  (itemStatus === 'cancelled' &&
+    Boolean(appointment?.rejected_at))
 
-  const isCancelled =
-    itemStatus === 'cancelled' &&
-    !isRejected
+const isCancelled =
+  itemStatus === 'cancelled' &&
+  !isRejected
 
   const displayStatus =
     isRejected
@@ -2756,22 +2771,11 @@ export default function MyAppointments() {
       }
 
 
-      // =====================================================
+            // =====================================================
       // STATUS
       // =====================================================
 
-      const status =
-        apt.status?.toLowerCase()
-
-
-      const isRejected =
-        status === 'cancelled' &&
-        Boolean(apt.rejected_at)
-
-
-      const isCancelled =
-        status === 'cancelled' &&
-        !isRejected
+      const status = getEffectiveStatus(apt)
 
 
       // =====================================================
@@ -2785,33 +2789,19 @@ export default function MyAppointments() {
         return false
       }
 
+      if (
+        appointmentFilter === 'cancelled' &&
+        status !== 'cancelled'
+      ) {
+        return false
+      }
 
       if (
-  appointmentFilter === 'cancelled' &&
-  !(
-    status === 'cancelled' &&
-    !Boolean(
-      apt.rejection_reason?.trim()
-    )
-  )
-) {
-  return false
-}
-
-
-
-      if (
-  appointmentFilter === 'rejected' &&
-  !(
-    status === 'cancelled' &&
-    Boolean(
-      apt.rejection_reason?.trim()
-    )
-  )
-) {
-  return false
-}
-
+        appointmentFilter === 'rejected' &&
+        status !== 'rejected'
+      ) {
+        return false
+      }
 
 
       // =====================================================
@@ -2973,30 +2963,17 @@ useEffect(() => {
   const status =
     targetAppointment.status?.toLowerCase()
 
-  if (status === 'completed') {
+  const effectiveStatus = getEffectiveStatus(targetAppointment)
 
-    setAppointmentFilter(
-      'completed'
-    )
-
-  } else if (status === 'cancelled') {
-
-    setAppointmentFilter(
-      'cancelled'
-    )
-
-  } else if (status === 'rejected') {
-
-    setAppointmentFilter(
-      'rejected'
-    )
-
-  } else {
-
-    setAppointmentFilter(
-      'all'
-    )
-  }
+if (effectiveStatus === 'completed') {
+  setAppointmentFilter('completed')
+} else if (effectiveStatus === 'cancelled') {
+  setAppointmentFilter('cancelled')
+} else if (effectiveStatus === 'rejected') {
+  setAppointmentFilter('rejected')
+} else {
+  setAppointmentFilter('all')
+}
 
 
   // =======================================================
@@ -4269,38 +4246,12 @@ const completedCount =
 
 const cancelledCount =
   visibleAppointments.filter(
-    apt => {
-
-      const status =
-        apt.status?.toLowerCase()
-
-      const isRejected =
-        status === 'cancelled' &&
-        Boolean(
-          apt.rejection_reason?.trim()
-        )
-
-      return (
-        status === 'cancelled' &&
-        !isRejected
-      )
-    }
+    apt => getEffectiveStatus(apt) === 'cancelled'
   ).length
 
 const rejectedCount =
   visibleAppointments.filter(
-    apt => {
-
-      const status =
-        apt.status?.toLowerCase()
-
-      return (
-        status === 'cancelled' &&
-        Boolean(
-          apt.rejection_reason?.trim()
-        )
-      )
-    }
+    apt => getEffectiveStatus(apt) === 'rejected'
   ).length
 
 const activeCount =
@@ -5915,9 +5866,11 @@ const activeCount =
 
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                 Filter:{' '}
-                {appointmentFilter === 'completed'
-                  ? 'Completed'
-                  : 'Cancelled'}
+{appointmentFilter === 'completed'
+  ? 'Completed'
+  : appointmentFilter === 'rejected'
+  ? 'Rejected'
+  : 'Cancelled'}
               </span>
 
             </div>
@@ -6045,13 +5998,10 @@ const appointmentNumber = Number.isFinite(safeAppointmentId)
                 const statusTheme =
                   getStatusTheme(status)
 
-                  const isRejected =
-  status === 'cancelled' &&
-  Boolean(apt.rejected_at)
+                  const effectiveStatus = getEffectiveStatus(apt)
 
-const isCancelled =
-  status === 'cancelled' &&
-  !isRejected
+const isRejected = effectiveStatus === 'rejected'
+const isCancelled = effectiveStatus === 'cancelled'
 
 const displayStatusLabel =
   isRejected

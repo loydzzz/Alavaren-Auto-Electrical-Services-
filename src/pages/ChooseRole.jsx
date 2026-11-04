@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   FaUser,
@@ -7,8 +8,58 @@ import {
   FaArrowRight
 } from 'react-icons/fa'
 
+const TERMS = [
+  ['1. Use of the System', 'Use the Alavaren Auto Electrical Services system only for legitimate account, appointment, and service-related purposes. By using it, you agree to follow these terms and applicable laws.'],
+  ['2. Account and Information', 'Provide accurate account, contact, vehicle, and service details. Keep your login credentials private and promptly report suspected unauthorized access.'],
+  ['3. Appointments', 'Submitting a request does not guarantee a booking. Appointments are subject to review and confirmation by Alavaren.'],
+  ['4. Acceptable Use', 'Do not impersonate others, submit knowingly false information, access data without permission, disrupt the system, or use it for unlawful activity.'],
+  ['5. Availability and Restrictions', 'The system may occasionally be unavailable or changed for maintenance, security, or service improvements. Access may be restricted for misuse or security concerns.'],
+  ['6. Communications and Updates', 'Alavaren may use your provided contact details for account, appointment, scheduling, and related service updates. These terms may be revised when necessary; updated terms should be posted in the system.']
+]
+
+const PRIVACY_COOKIES = [
+  ['1. Information We Collect', 'The system may collect information you provide, such as your name, contact details, account information, vehicle details, appointment requests, and messages related to service.'],
+  ['2. How Information Is Used', 'Information may be used to manage accounts, respond to requests, schedule and provide services, send relevant updates, protect system security, and improve system operations.'],
+  ['3. Access and Protection', 'Access to personal information should be limited to authorized personnel who need it for legitimate business purposes. Reasonable safeguards should be used to help protect information from unauthorized access or disclosure.'],
+  ['4. Cookies and Similar Technologies', 'The website or its service providers may use essential cookies or similar technologies to support functionality, security, and user preferences. If optional analytics or tracking tools are used, explain them clearly and obtain consent where required. You can manage cookies through your browser settings; disabling them may affect some features.'],
+  ['5. Sharing, Retention, and Your Choices', 'Information should only be shared when needed to operate the service, comply with legal obligations, or protect legitimate interests. It should be kept only as long as necessary. For questions or requests about personal information, contact Alavaren through its official contact channels.']
+]
+
 export default function ChooseRole() {
   const navigate = useNavigate()
+
+  const [activeLegalModal, setActiveLegalModal] = useState('')
+
+  function closeLegalModal() {
+    setActiveLegalModal('')
+  }
+
+  
+  // Lock background scrolling while a legal modal is open
+  useEffect(() => {
+    if (!activeLegalModal) return
+
+    const originalOverflow = document.body.style.overflow
+    const originalPaddingRight = document.body.style.paddingRight
+
+    // Prevent background page scrolling
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth
+
+    document.body.style.overflow = 'hidden'
+
+    // Prevent layout shifting when the scrollbar disappears
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`
+    }
+
+    return () => {
+      // Restore the original page scrolling and spacing
+      document.body.style.overflow = originalOverflow
+      document.body.style.paddingRight = originalPaddingRight
+    }
+  }, [activeLegalModal])
+
 
   const roles = [
     {
@@ -365,6 +416,7 @@ export default function ChooseRole() {
       fontSize: '7px',
       fontWeight: 900,
       letterSpacing: '2px',
+      lineHeight: 2,
       padding: '0 12px'
     },
 
@@ -612,11 +664,332 @@ export default function ChooseRole() {
           }
         }
 
+        /* ---------- "Don't have an account?" row ---------- */
+
+        .choose-role-bottom-line {
+          flex-shrink: 0;
+        }
+
+        .choose-role-bottom-text {
+          text-align: center;
+        }
+
+        /* ---------- Footer brand line (desktop: same single line as before) ---------- */
+
+        .choose-role-footer-brand,
+        .choose-role-footer-links {
+          display: inline;
+        }
+
+        /* ---------- Phones (portrait + short landscape) ---------- */
+
+        @media (max-width: 680px), (max-height: 600px) {
+          /* Footer leaves absolute positioning and sits below the content,
+             so it can never overlap the cards or the account row. */
+          .choose-role-footer {
+            position: relative !important;
+            bottom: auto !important;
+            left: auto !important;
+            right: auto !important;
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 26px;
+            padding: 0 12px !important;
+            line-height: 1.9 !important;
+          }
+
+          .choose-role-footer-brand,
+          .choose-role-footer-links {
+            display: block;
+          }
+
+          .choose-role-footer-links {
+            margin-top: 4px;
+          }
+
+          /* Hides only the separator between the brand line and the links line */
+          .choose-role-footer-split {
+            display: none;
+          }
+
+          /* Account row wraps and centers instead of squeezing */
+          .choose-role-bottom {
+            gap: 8px !important;
+            margin-top: 22px !important;
+          }
+
+          .choose-role-bottom-line {
+            width: 18px !important;
+          }
+
+          .choose-role-bottom-content {
+            max-width: calc(100% - 52px) !important;
+            gap: 7px !important;
+          }
+
+          .choose-role-bottom-text {
+            font-size: 10px !important;
+            line-height: 1.5 !important;
+          }
+        }
+
+        /* ---------- Footer legal links + modal ---------- */
+
+        .terms-link {
+          display: inline;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          color: #c0392b;
+          font: inherit;
+          letter-spacing: inherit;
+          cursor: pointer;
+          text-decoration: underline;
+          text-underline-offset: 3px;
+          pointer-events: auto;
+        }
+
+        .terms-link:hover {
+          color: #922b21;
+        }
+
+        .terms-link:focus-visible {
+          outline: 2px solid rgba(192,57,43,0.75);
+          outline-offset: 3px;
+          border-radius: 3px;
+        }
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          overflow-x: hidden;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          background: rgba(17,24,39,.66);
+          backdrop-filter: blur(9px);
+          -webkit-backdrop-filter: blur(9px);
+          animation: termsOverlayIn .2s ease both;
+          font-family: "Segoe UI", Arial, sans-serif;
+        }
+
+        .modal {
+          position: relative;
+          width: 100%;
+          max-width: 650px;
+          flex: 0 0 auto;
+          margin: auto;
+          display: block;
+          overflow: visible;
+          border: 1px solid rgba(255,255,255,.85);
+          border-radius: 22px;
+          background: #fff;
+          box-shadow:
+            0 28px 80px rgba(0,0,0,.26),
+            0 8px 24px rgba(192,57,43,.08);
+          animation: termsModalIn .24s ease both;
+          text-align: left;
+          letter-spacing: normal;
+        }
+
+        .modal-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 14px;
+          padding: 17px 22px 14px;
+          border-bottom: 1px solid #f0f1f3;
+          border-radius: 22px 22px 0 0;
+          background:
+            radial-gradient(
+              circle at 95% 0%,
+              rgba(192,57,43,.09),
+              transparent 34%
+            ),
+            linear-gradient(135deg,#fff,#f8f9fb);
+        }
+
+        .modal-badge {
+          display: inline-flex;
+          align-items: center;
+          margin-bottom: 5px;
+          padding: 4px 8px;
+          border: 1px solid rgba(192,57,43,.15);
+          border-radius: 999px;
+          color: #a93226;
+          background: rgba(192,57,43,.07);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 1.3px;
+          text-transform: uppercase;
+        }
+
+        .modal-title {
+          margin: 0;
+          color: #1f2937;
+          font-size: clamp(19px,2.5vw,23px);
+          line-height: 1.25;
+          font-weight: 800;
+          letter-spacing: -.6px;
+        }
+
+        .close-button {
+          width: 36px;
+          height: 36px;
+          flex: 0 0 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          border: 1px solid #e5e7eb;
+          border-radius: 11px;
+          color: #6b7280;
+          background: #fff;
+          cursor: pointer;
+        }
+
+        .close-button svg {
+          display: block;
+          width: 14px;
+          height: 14px;
+        }
+
+        .close-button:hover {
+          color: #b42318;
+          border-color: #f0c9c5;
+          background: #fff7f6;
+        }
+
+        .modal-content {
+          display: block;
+          padding: 15px 22px 17px;
+          overflow: visible;
+          color: #6b7280;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .modal-content > div {
+          margin: 0 0 10px;
+        }
+
+        .modal-content > div:last-child {
+          margin-bottom: 0;
+        }
+
+        .modal-content h3 {
+          margin: 0 0 3px;
+          color: #1f2937;
+          font-size: 12px;
+          line-height: 1.35;
+          font-weight: 800;
+        }
+
+        .modal-content p {
+          margin: 0;
+          color: #6b7280;
+          font-size: 10.5px;
+          line-height: 1.5;
+        }
+
+        .modal-footer {
+          display: flex;
+          justify-content: flex-end;
+          padding: 11px 22px;
+          border-top: 1px solid #eceef1;
+          border-radius: 0 0 22px 22px;
+          background: #fafafa;
+        }
+
+        .modal-button {
+          min-width: 112px;
+          min-height: 36px;
+          padding: 0 15px;
+          border: 0;
+          border-radius: 11px;
+          color: #fff;
+          background: linear-gradient(135deg,#c0392b,#922b21);
+          box-shadow: 0 8px 18px rgba(192,57,43,.18);
+          font-size: 11px;
+          font-weight: 800;
+          cursor: pointer;
+          transition:
+            transform .2s ease,
+            box-shadow .2s ease;
+        }
+
+        .modal-button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 11px 22px rgba(192,57,43,.24);
+        }
+
+        @keyframes termsOverlayIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes termsModalIn {
+          from {
+            opacity: 0;
+            transform: translateY(10px) scale(.99);
+          }
+
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @media (max-width: 680px) {
+          .modal-overlay {
+            padding: 12px;
+          }
+
+          .modal {
+            border-radius: 18px;
+          }
+
+          .modal-header {
+            padding: 15px 16px 12px;
+            border-radius: 18px 18px 0 0;
+          }
+
+          .modal-content {
+            padding: 13px 16px 14px;
+          }
+
+          .modal-content p {
+            font-size: 10px;
+            line-height: 1.45;
+          }
+
+          .modal-content > div {
+            margin-bottom: 9px;
+          }
+
+          .modal-footer {
+            padding: 10px 16px;
+            border-radius: 0 0 18px 18px;
+          }
+
+          .modal-button {
+            width: 100%;
+          }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .choose-role-brand,
           .premium-role-card,
-          .choose-role-card-glow {
+          .choose-role-card-glow,
+          .modal-overlay,
+          .modal,
+          .modal-button {
             transition: none !important;
+            animation: none !important;
           }
         }
       `}</style>
@@ -805,15 +1178,24 @@ export default function ChooseRole() {
 
           {/* ACCOUNT INFORMATION */}
 
-          <div style={styles.bottomBox}>
+          <div className="choose-role-bottom" style={styles.bottomBox}>
 
-            <div style={styles.bottomLine} />
+            <div
+              className="choose-role-bottom-line"
+              style={styles.bottomLine}
+            />
 
-            <div style={styles.bottomContent}>
+            <div
+              className="choose-role-bottom-content"
+              style={styles.bottomContent}
+            >
 
               <span style={styles.bottomDot} />
 
-              <p style={styles.bottomText}>
+              <p
+                className="choose-role-bottom-text"
+                style={styles.bottomText}
+              >
                 Don’t have an account?
                 {' '}
                 <span style={styles.bottomHighlight}>
@@ -824,6 +1206,7 @@ export default function ChooseRole() {
             </div>
 
             <div
+              className="choose-role-bottom-line"
               style={{
                 ...styles.bottomLine,
                 transform: 'scaleX(-1)'
@@ -836,15 +1219,135 @@ export default function ChooseRole() {
 
         {/* FOOTER */}
 
-        <div style={styles.footerAccent}>
-          ALAVAREN AUTO ELECTRICAL
+        <div
+          className="choose-role-footer"
+          style={styles.footerAccent}
+        >
+          <div className="choose-role-footer-brand">
+            ALAVAREN AUTO ELECTRICAL
 
-          <span style={styles.footerSeparator}>
+            <span style={styles.footerSeparator}>
+              •
+            </span>
+
+            SERVICE MANAGEMENT SYSTEM
+          </div>
+
+          <span
+            className="choose-role-footer-split"
+            style={styles.footerSeparator}
+          >
             •
           </span>
 
-          SERVICE MANAGEMENT SYSTEM
+          <div className="choose-role-footer-links">
+            <button
+              type="button"
+              className="terms-link"
+              onClick={() => setActiveLegalModal('terms')}
+              aria-haspopup="dialog"
+            >
+              TERMS OF USE
+            </button>
+
+            <span style={styles.footerSeparator}>
+              •
+            </span>
+
+            <button
+              type="button"
+              className="terms-link"
+              onClick={() => setActiveLegalModal('privacy')}
+              aria-haspopup="dialog"
+            >
+              PRIVACY &amp; COOKIES
+            </button>
+          </div>
         </div>
+
+        {/* =====================================================
+            TERMS OF USE / PRIVACY & COOKIES MODAL
+        ===================================================== */}
+
+        {activeLegalModal && (
+          <div
+            className="modal-overlay"
+            onClick={closeLegalModal}
+          >
+            <div
+              className="modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="choose-role-legal-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+
+              {/* MODAL HEADER */}
+
+              <div className="modal-header">
+                <div>
+                  <div className="modal-badge">
+                    Legal
+                  </div>
+
+                  <h2
+                    id="choose-role-legal-title"
+                    className="modal-title"
+                  >
+                    {activeLegalModal === 'terms'
+                      ? 'Terms & Conditions'
+                      : 'Privacy & Cookies'}
+                  </h2>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeLegalModal}
+                  className="close-button"
+                  aria-label="Close legal information"
+                >
+                  <svg
+                    viewBox="0 0 14 14"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2 2 L12 12 M12 2 L2 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* MODAL CONTENT */}
+
+              <div className="modal-content">
+                {(activeLegalModal === 'terms'
+                  ? TERMS
+                  : PRIVACY_COOKIES
+                ).map(([heading, body]) => (
+                  <div key={heading}>
+                    <h3>{heading}</h3>
+                    <p>{body}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* MODAL FOOTER */}
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  onClick={closeLegalModal}
+                  className="modal-button"
+                >
+                  I Understand
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
 
       </div>
     </>

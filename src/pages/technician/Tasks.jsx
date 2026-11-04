@@ -47,6 +47,26 @@ UserCheck,
 } from 'lucide-react'
 import { FaClipboardList } from 'react-icons/fa'
 
+function PartThumb({ url, name, size = 'h-14 w-14' }) {
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={name}
+        loading="lazy"
+        className={`${size} shrink-0 rounded-xl border border-slate-200 bg-slate-50 object-contain`}
+      />
+    )
+  }
+
+  return (
+    <div
+      className={`${size} flex shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-slate-300`}
+    >
+      <Package className="h-6 w-6" />
+    </div>
+  )
+}
 
 export default function ServiceTasks() {
   const [tasks, setTasks] = useState([])
@@ -941,7 +961,7 @@ useEffect(() => {
   async function fetchInventoryItems() {
     const { data, error } = await supabase
       .from('inventory')
-      .select('id, name, quantity, price, category')
+      .select('id, name, quantity, price, category, image_url, description')
       .order('name')
 
     if (error) {
@@ -1240,6 +1260,16 @@ useEffect(() => {
     window.open(data.signedUrl, '_blank')
   }
 
+
+    const getPartImage = (serviceItem) => {
+    const match =
+      inventoryItems.find(
+        (inv) => String(inv.id) === String(serviceItem.inventory_id)
+      ) ||
+      inventoryItems.find((inv) => inv.name === serviceItem.item_name)
+
+    return match?.image_url || null
+  }
   // =========================================================
   // INVENTORY ITEM ACTIONS
   // =========================================================
@@ -4477,15 +4507,24 @@ const formatLongDate = (value) => {
 
                                   <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
-                                    <div>
+                                                                        <div className="flex min-w-0 items-center gap-3">
 
-                                      <p className="text-xs font-bold uppercase text-slate-400">
-                                        Item
-                                      </p>
+                                      <PartThumb
+                                        url={getPartImage(item)}
+                                        name={item.item_name}
+                                      />
 
-                                      <p className="mt-1 break-words font-bold text-slate-900">
-                                        {item.item_name}
-                                      </p>
+                                      <div className="min-w-0">
+
+                                        <p className="text-xs font-bold uppercase text-slate-400">
+                                          Item
+                                        </p>
+
+                                        <p className="mt-1 break-words font-bold text-slate-900">
+                                          {item.item_name}
+                                        </p>
+
+                                      </div>
 
                                     </div>
 
@@ -5839,7 +5878,27 @@ const formatLongDate = (value) => {
 
               {selectedInventoryItem && (
 
-                <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+                                <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+
+                  <div className="mb-3 flex justify-center rounded-xl bg-white p-3 ring-1 ring-orange-100">
+                    {selectedInventoryItem.image_url ? (
+                      <img
+                        src={selectedInventoryItem.image_url}
+                        alt={selectedInventoryItem.name}
+                        className="block h-auto max-h-40 w-auto max-w-full rounded-lg object-contain"
+                      />
+                    ) : (
+                      <div className="flex h-24 w-24 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
+                        <Package className="h-8 w-8" />
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedInventoryItem.description && (
+                    <p className="mb-3 break-words text-xs text-slate-600">
+                      {selectedInventoryItem.description}
+                    </p>
+                  )}
 
                   <div className="flex justify-between gap-4">
 
