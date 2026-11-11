@@ -100,10 +100,6 @@ export default function ForgotPassword() {
     setActiveLegalModal('')
   }
 
-    function closeLegalModal() {
-    setActiveLegalModal('')
-  }
-
   // Lock background scrolling while a legal modal is open
   useEffect(() => {
     if (!activeLegalModal) return
