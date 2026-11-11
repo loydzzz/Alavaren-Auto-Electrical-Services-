@@ -961,7 +961,7 @@ useEffect(() => {
   async function fetchInventoryItems() {
     const { data, error } = await supabase
       .from('inventory')
-      .select('id, name, quantity, price, category, image_url, description')
+          .select('id, name, quantity, price, category, image_url, description, low_stock_threshold')
       .order('name')
 
     if (error) {
@@ -969,7 +969,7 @@ useEffect(() => {
       toast.error('Unable to load inventory items.')
       return
     }
-
+    console.log('INVENTORY WITH THRESHOLD:', data)
     setInventoryItems(data || [])
   }
 
@@ -1270,6 +1270,39 @@ useEffect(() => {
 
     return match?.image_url || null
   }
+
+  function getStockStatus(item) {
+  const qty = Number(item?.quantity || 0)
+  const threshold = Number(item?.low_stock_threshold || 0)
+
+  if (qty <= 0) {
+    return {
+      key: 'out',
+      text: 'Out of Stock',
+      color: 'bg-red-50 text-red-700 border-red-200',
+      dot: 'bg-red-500',
+      message: 'This item is out of stock and cannot be added.',
+    }
+  }
+
+  if (qty <= threshold) {
+    return {
+      key: 'low',
+      text: 'Low Stock',
+      color: 'bg-yellow-50 text-yellow-800 border-yellow-200',
+      dot: 'bg-yellow-500',
+      message: `Only ${qty} left. Stock is at or below the low stock alert (${threshold}).`,
+    }
+  }
+
+  return {
+    key: 'in',
+    text: 'In Stock',
+    color: 'bg-green-50 text-green-700 border-green-200',
+    dot: 'bg-green-500',
+    message: null,
+  }
+}
   // =========================================================
   // INVENTORY ITEM ACTIONS
   // =========================================================
@@ -1281,11 +1314,16 @@ useEffect(() => {
     }
 
     if (!selectedInventoryItem) {
-      toast.error('Please select an inventory item.')
-      return
-    }
+  toast.error('Please select an inventory item.')
+  return
+}
 
-    const qty = Number(serviceItemQuantity)
+if (Number(selectedInventoryItem.quantity) <= 0) {
+  toast.error(`${selectedInventoryItem.name} is out of stock.`)
+  return
+}
+
+const qty = Number(serviceItemQuantity)
 
     if (!qty || qty <= 0) {
       toast.error('Enter a valid quantity.')
@@ -5856,29 +5894,60 @@ const formatLongDate = (value) => {
                   Select inventory item
                 </option>
 
-                {inventoryItems.map(item => (
-                  <option
-                    key={item.id}
-                    value={item.id}
-                    disabled={Number(item.quantity) <= 0}
-                  >
-                    {item.name} — Stock: {item.quantity} — ₱
-                    {Number(item.price || 0).toLocaleString(
-                      undefined,
-                      {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      }
-                    )}
-                  </option>
-                ))}
+                {inventoryItems.map(item => {
+  const stock = getStockStatus(item)
+
+  return (
+    <option
+      key={item.id}
+      value={item.id}
+      disabled={stock.key === 'out'}
+    >
+      {item.name} — Stock: {item.quantity}
+      {stock.key === 'low' ? ' (LOW STOCK)' : ''}
+      {stock.key === 'out' ? ' (OUT OF STOCK)' : ''}
+      {' '}— ₱
+      {Number(item.price || 0).toLocaleString(
+        undefined,
+        {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }
+      )}
+    </option>
+  )
+})}
 
               </select>
 
 
-              {selectedInventoryItem && (
+              {selectedInventoryItem && (() => {
+  const stock = getStockStatus(selectedInventoryItem)
 
-                                <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+  return (
+  <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+
+    {/* STATUS BADGE */}
+    <div className="mb-3 flex justify-end">
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${stock.color}`}
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${stock.dot}`} />
+        {stock.text}
+      </span>
+    </div>
+
+    {/* WARNING BANNER (low / out only) */}
+    {stock.message && (
+      <div
+        className={`mb-3 flex items-start gap-2 rounded-lg border p-3 ${stock.color}`}
+      >
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <p className="text-xs font-semibold leading-relaxed">
+          {stock.message}
+        </p>
+      </div>
+    )}
 
                   <div className="mb-3 flex justify-center rounded-xl bg-white p-3 ring-1 ring-orange-100">
                     {selectedInventoryItem.image_url ? (
@@ -5946,13 +6015,12 @@ const formatLongDate = (value) => {
                           maximumFractionDigits: 2,
                         }
                       )}
-                    </p>
+                        </p>
+  </div>
+  </div>
+  )
+})()}
 
-                  </div>
-
-                </div>
-
-              )}
 
 
               <label className="mb-2 block text-sm font-bold text-slate-700">
@@ -6039,9 +6107,10 @@ const formatLongDate = (value) => {
                   type="button"
                   onClick={handleAddServiceItem}
                   disabled={
-                    itemsLoading ||
-                    !selectedInventoryItem
-                  }
+  itemsLoading ||
+  !selectedInventoryItem ||
+  Number(selectedInventoryItem.quantity) <= 0
+}
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 py-3 text-sm font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
 

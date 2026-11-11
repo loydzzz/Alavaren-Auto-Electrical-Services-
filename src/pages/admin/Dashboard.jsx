@@ -4482,14 +4482,32 @@ async function handleNotificationClick(notification) {
   // =======================================================
 
   switch (notification.type) {
-    case "appointment":
-case "booking_status":
-  navigate("/admin/appointments", {
-    state: {
-      appointmentId: notification.appointment_id,
-    },
-  })
-  break
+        case "appointment":
+    case "booking_status": {
+      // Check if this appointment was archived
+      let isArchived = false
+
+      if (notification.appointment_id) {
+        const { data: appointment, error } = await supabase
+          .from("appointments")
+          .select("archived")
+          .eq("id", notification.appointment_id)
+          .maybeSingle()
+
+        if (error) {
+          console.error("Archived check error:", error)
+        }
+
+        isArchived = appointment?.archived === true
+      }
+
+      navigate(isArchived ? "/admin/archive" : "/admin/appointments", {
+        state: {
+          appointmentId: notification.appointment_id,
+        },
+      })
+      break
+    }
 
         case "inventory":
     case "low_stock":
@@ -4811,6 +4829,8 @@ const markAllNotificationsAsRead = async () => {
   }
 }
 
+const formatApptNumber = (id) =>
+  id ? `APPT-${String(id).padStart(6, "0")}` : null;
   // =========================================================
   // TIME AGO
   // =========================================================
@@ -21541,12 +21561,21 @@ INVENTORY ITEMS
                           {activity.item_name}
                         </p>
 
-                        <p
+                                                <p
                           className={`mt-1 text-sm font-extrabold ${theme.text}`}
                         >
                           {activity.action}{" "}
                           {activity.quantity}
                         </p>
+
+                        {activity.appointment_id && (
+                          <p className="mt-1 text-xs font-bold text-slate-500">
+                            {activity.action === "Restored"
+                              ? "Restored from"
+                              : "Used to"}{" "}
+                            {formatApptNumber(activity.appointment_id)}
+                          </p>
+                        )}
 
                       </div>
 
@@ -21863,12 +21892,21 @@ INVENTORY ITEMS
 
                     {/* ACTION */}
 
-                    <p
+                                        <p
                       className={`mt-2 text-sm font-extrabold ${theme.text}`}
                     >
                       {activity.action}{" "}
                       {activity.quantity}
                     </p>
+
+                    {activity.appointment_id && (
+                      <p className="mt-1 text-xs font-bold text-slate-500">
+                        {activity.action === "Restored"
+                          ? "Restored from"
+                          : "Used to"}{" "}
+                        {formatApptNumber(activity.appointment_id)}
+                      </p>
+                    )}
 
 
                     {/* PRICE CHANGE */}
@@ -22317,6 +22355,41 @@ INVENTORY ITEMS
             </div>
 
           </div>
+
+          {/* ===================================================
+    APPOINTMENT
+=================================================== */}
+
+{selectedInventoryActivity.appointment_id && (
+
+  <div className="group rounded-[1.25rem] border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md md:col-span-2">
+
+    <div className="flex items-start justify-between gap-3">
+
+      <div className="min-w-0">
+
+        <p className="text-[10px] font-black uppercase tracking-[0.13em] text-slate-400">
+          Appointment
+        </p>
+
+        <p className="mt-2 text-base font-black tracking-[-0.01em] text-slate-950">
+          {selectedInventoryActivity.action === "Restored"
+            ? "Restored from"
+            : "Used to"}{" "}
+          {formatApptNumber(selectedInventoryActivity.appointment_id)}
+        </p>
+
+      </div>
+
+      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${selectedActivityTheme.iconBox}`}>
+        <selectedActivityTheme.Icon className="h-4 w-4" strokeWidth={2.2} />
+      </div>
+
+    </div>
+
+  </div>
+
+)}
 
 
           {/* ===================================================

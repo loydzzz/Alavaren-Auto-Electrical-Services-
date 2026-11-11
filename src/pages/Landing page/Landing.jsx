@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import React, { useEffect, useRef, useState } from 'react'
-import SpecializedCarousel from './Specializedcarousel'
+import SpecializedCarousel from './SpecializedCarousel'
 
 import { FaFacebookF } from 'react-icons/fa'
 import { FaTiktok } from 'react-icons/fa6'
@@ -2211,7 +2211,7 @@ const services = [
       title: 'Alternator Repair',
       description:
         'Repair and diagnosis of alternator problems that can affect battery charging and your vehicle’s electrical power.',
-        image: '/images/alternator.jpeg'
+        image: '/images/alternator.jpg'
 
       },
 
@@ -2220,7 +2220,7 @@ const services = [
       title: 'Starter Repair',
       description:
         'Diagnosis and repair of starter motor and starting-system problems when your vehicle has difficulty starting.',
-      image: '/images/StarterRepair.webp'
+      image: '/images/StarterRepair.jpg'
 
     },
 
@@ -2229,7 +2229,7 @@ const services = [
       title: 'Power Window Motor Repair',
       description:
         'Repair of power window motor and electrical problems that prevent vehicle windows from moving properly.',
-        image: '/images/PowerWindowRepair.webp'
+        image: '/images/PowerWindowRepair.jpg'
     },
 
     {
@@ -2246,7 +2246,7 @@ const services = [
       title: 'BCM Repair',
       description:
         'Diagnosis and repair of Body Control Module issues involving electrical features such as lighting, locks, windows, and other body systems.',
-      image: '/images/BCM.webp'
+      image: '/images/BCM.jpg'
 
     },
 
@@ -2264,7 +2264,7 @@ const services = [
       title: 'ECU Programming',
       description:
         'Electronic programming and configuration services for supported vehicle control modules.',
-                      image: '/images/ECUProgramming.webp'
+                      image: '/images/ECUProgramming.jpg'
 
     },
 
@@ -2273,7 +2273,7 @@ const services = [
       title: 'Generator Services',
       description:
         'Electrical inspection, troubleshooting, repair, and maintenance services for generators.',
-      image: '/images/GeneratorServices.webp'
+      image: '/images/GeneratorServices.jpg'
 
     }
 
@@ -3620,7 +3620,7 @@ useEffect(() => {
       {/* BACKGROUND IMAGE */}
 
       <img
-  src="/images/ElectricalExpertise.webp"
+  src="/images/ElectricalExpertise.jpg"
   alt="Electrical Expertise"
         className="
           absolute

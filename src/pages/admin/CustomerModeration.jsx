@@ -40,6 +40,45 @@ import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
 
 
+// Wraps the part of the text that matches the search in a yellow mark
+function highlightText(text, query) {
+  if (text === null || text === undefined || text === '') return text
+
+  const value = String(text)
+  const q = (query || '').trim()
+
+  if (!q) return value
+
+  // escape special characters so searches like "(" don't break
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = value.split(new RegExp(`(${escaped})`, 'gi'))
+
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark key={i} className="rounded bg-yellow-300 px-0.5 text-gray-900">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  )
+}
+
+const SEARCH_GLOW = {
+  customer: {
+    row: 'bg-red-100 [&>td:first-child]:border-l-4 [&>td:first-child]:border-red-500',
+    card: 'bg-red-100/120 ring-4 ring-inset ring-red-500/80',
+  },
+  technician: {
+    row: 'bg-orange-100 [&>td:first-child]:border-l-4 [&>td:first-child]:border-orange-500',
+    card: 'bg-orange-100/120 ring-4 ring-inset ring-orange-500/80',
+  },
+  admin: {
+    row: 'bg-purple-100 [&>td:first-child]:border-l-4 [&>td:first-child]:border-purple-500',
+    card: 'bg-purple-100/120 ring-4 ring-inset ring-purple-500/80',
+  },
+}
+
 /* =========================================================
    CUSTOMER / USER ACCOUNT MANAGEMENT
 ========================================================= */
@@ -64,6 +103,8 @@ export default function CustomerModeration() {
   const [ageFilter, setAgeFilter] = useState('all')
   const [activityFilter, setActivityFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [searchGlow, setSearchGlow] = useState(false)
+  const [searchBlink, setSearchBlink] = useState(false)
 
   // =========================================================
   // PAGINATION
@@ -780,6 +821,37 @@ deactivatedAt:
       statusFilter,
     ])
 
+
+      // =========================================================
+  // BEST SEARCH MATCH (the one that gets the glow + scroll)
+  // =========================================================
+
+  const bestMatch = useMemo(() => {
+    const query = search.trim().toLowerCase()
+
+    if (!query || filteredCustomers.length === 0) return null
+
+    const name = (u) => u.name?.toLowerCase() || ''
+    const username = (u) => u.username?.toLowerCase() || ''
+
+    return (
+      // 1. exact name or username
+      filteredCustomers.find(
+        (u) => name(u) === query || username(u) === query
+      ) ||
+      // 2. name or username starts with the search
+      filteredCustomers.find(
+        (u) => name(u).startsWith(query) || username(u).startsWith(query)
+      ) ||
+      // 3. name or username contains the search
+      filteredCustomers.find(
+        (u) => name(u).includes(query) || username(u).includes(query)
+      ) ||
+      // 4. matched only by email, phone, or address
+      filteredCustomers[0]
+    )
+  }, [filteredCustomers, search])
+
   // =========================================================
   // STATISTICS
   // =========================================================
@@ -929,6 +1001,47 @@ deactivatedAt:
     activityFilter,
     statusFilter,
   ])
+
+    // When searching, scroll to the first matching user
+  useEffect(() => {
+    if (!search.trim()) return
+
+    // wait until the person stops typing and the list has updated
+    const timer = setTimeout(() => {
+      // the page renders a table AND cards; pick the one that is visible
+      const target = [
+        ...document.querySelectorAll('[data-user-match]'),
+      ].find((el) => el.offsetParent !== null)
+
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 600)
+
+    return () => clearTimeout(timer)
+  }, [search])
+
+      // Glow the first match: blink for 8 seconds, then fade out
+  useEffect(() => {
+    if (!search.trim()) {
+      setSearchGlow(false)
+      setSearchBlink(false)
+      return
+    }
+
+    setSearchGlow(true)
+    setSearchBlink(true)
+
+    // after 8 seconds the blinking stops (the color stays)
+    const stopBlink = setTimeout(() => setSearchBlink(false), 8000)
+
+    // one second later the color is removed (this is where the fade happens)
+    const stopGlow = setTimeout(() => setSearchGlow(false), 9000)
+
+    // typing again restarts everything
+    return () => {
+      clearTimeout(stopBlink)
+      clearTimeout(stopGlow)
+    }
+  }, [search])
 
   // =========================================================
   // OPEN PROFILE
@@ -2123,9 +2236,15 @@ useEffect(() => {
 
                 {paginatedUsers.map(
                   (user) => (
-                    <UserTableRow
+                                        <UserTableRow
                       key={user.id}
                       user={user}
+                      searchTerm={search}
+                      isFirstMatch={
+  searchGlow &&
+  user.id === bestMatch?.id
+}
+isBlinking={searchBlink}
                       openProfile={
                         openProfile
                       }
@@ -2190,9 +2309,15 @@ useEffect(() => {
 
             {paginatedUsers.map(
               (user) => (
-                <UserMobileCard
+                                <UserMobileCard
                   key={user.id}
                   user={user}
+                  searchTerm={search}
+                  isFirstMatch={
+  searchGlow &&
+  user.id === bestMatch?.id
+}
+isBlinking={searchBlink}
                   openProfile={
                     openProfile
                   }
@@ -2827,9 +2952,19 @@ function UserTableRow({
   formatDateTime,
   getAccountAgeLabel,
   getActivityLabel,
+    searchTerm = '',
+  isFirstMatch = false,
+  isBlinking = false,
 }) {
+  const glow = SEARCH_GLOW[user.role] || SEARCH_GLOW.customer
+
   return (
-    <tr className="border-b border-gray-100 transition hover:bg-gray-50/70">
+    <tr
+      data-user-match={isFirstMatch ? '' : undefined}
+      className={`border-b border-gray-100 transition-colors duration-700 ${
+        isFirstMatch ? glow.row : 'hover:bg-gray-50/70'
+      } ${isFirstMatch && isBlinking ? 'animate-pulse' : ''}`}
+    >
 
       {/* USER */}
 
@@ -2845,13 +2980,11 @@ function UserTableRow({
           <div className="min-w-0">
 
             <p className="truncate text-sm font-black text-gray-900">
-              {user.name ||
-                'Unnamed User'}
+              {highlightText(user.name, searchTerm) || 'Unnamed User'}
             </p>
 
             <p className="truncate text-xs text-gray-400">
-              @{user.username ||
-                'no username'}
+              @{highlightText(user.username, searchTerm) || 'no username'}
             </p>
 
           </div>
@@ -2869,12 +3002,11 @@ function UserTableRow({
         <div className="min-w-[190px]">
 
           <p className="truncate text-xs font-semibold text-gray-700">
-            {user.email}
+            {highlightText(user.email, searchTerm)}
           </p>
 
-          <p className="mt-1 text-xs text-gray-400">
-            {user.phone ||
-              'No phone number'}
+            <p className="mt-1 text-xs text-gray-400">
+            {highlightText(user.phone, searchTerm) || 'No phone number'}
           </p>
 
         </div>
@@ -3157,10 +3289,20 @@ function UserMobileCard({
   processing,
   formatDateTime,
   getAccountAgeLabel,
-  getActivityLabel,
+   getActivityLabel,
+    searchTerm = '',
+  isFirstMatch = false,
+  isBlinking = false,
 }) {
+  const glow = SEARCH_GLOW[user.role] || SEARCH_GLOW.customer
+
   return (
-    <div className="p-4 sm:p-5">
+    <div
+      data-user-match={isFirstMatch ? '' : undefined}
+      className={`p-4 sm:p-5 transition-all duration-700 ${
+        isFirstMatch ? glow.card : ''
+      } ${isFirstMatch && isBlinking ? 'animate-pulse' : ''}`}
+    >
 
       {/* PROFILE */}
 
@@ -3175,9 +3317,8 @@ function UserMobileCard({
 
           <div className="flex flex-wrap items-center gap-2">
 
-            <h3 className="break-words text-sm font-black text-gray-900">
-              {user.name ||
-                'Unnamed User'}
+                        <h3 className="break-words text-sm font-black text-gray-900">
+              {highlightText(user.name, searchTerm) || 'Unnamed User'}
             </h3>
 
             <RoleBadge
@@ -3188,12 +3329,11 @@ function UserMobileCard({
           </div>
 
           <p className="mt-0.5 break-all text-xs text-gray-400">
-            {user.email}
+            {highlightText(user.email, searchTerm)}
           </p>
 
           <p className="mt-1 text-xs text-gray-400">
-            @{user.username ||
-              'no username'}
+            @{highlightText(user.username, searchTerm) || 'no username'}
           </p>
 
         </div>
@@ -3226,11 +3366,11 @@ function UserMobileCard({
           }
         />
 
-        <MobileInfo
+                <MobileInfo
           icon={<FaPhone />}
           label="Phone"
           value={
-            user.phone ||
+            highlightText(user.phone, searchTerm) ||
             'Not provided'
           }
         />

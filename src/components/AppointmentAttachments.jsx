@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Paperclip, Eye, Upload, Loader2, ChevronDown, CalendarDays } from 'lucide-react'
+import {
+  Paperclip,
+  Eye,
+  Upload,
+  Loader2,
+  ChevronDown,
+  CalendarDays,
+  Download,
+  Trash2,
+} from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 const BUCKET = 'service-task-attachments'
@@ -44,6 +53,23 @@ export default function AppointmentAttachments({
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [files, setFiles] = useState([])
+  const [currentUserId, setCurrentUserId] = useState(null)
+  const [removingId, setRemovingId] = useState(null)
+
+  // ==========================================
+  // CURRENT USER
+  // ==========================================
+  useEffect(() => {
+    let mounted = true
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (mounted) setCurrentUserId(data?.user?.id || null)
+    })
+
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   // ==========================================
   // LOAD ATTACHMENTS
@@ -52,7 +78,7 @@ export default function AppointmentAttachments({
     const { data, error } = await supabase
       .from('service_task_attachments')
       .select(
-        'id, file_name, file_path, file_type, file_size, uploaded_by_name, uploaded_by_role, created_at'
+        'id, file_name, file_path, file_type, file_size, uploaded_by, uploaded_by_name, uploaded_by_role, source, created_at'
       )
       .eq('appointment_id', appointmentId)
       .order('created_at', { ascending: false })
@@ -67,15 +93,12 @@ export default function AppointmentAttachments({
     setLoading(false)
   }, [appointmentId])
 
-  // Load on mount so the count shows even while collapsed
   useEffect(() => {
     loadFiles()
   }, [loadFiles])
 
   // ==========================================
   // LIVE UPDATES
-  // When an admin or technician uploads a file,
-  // it appears without refreshing the page.
   // ==========================================
   useEffect(() => {
     const channel = supabase
@@ -117,6 +140,91 @@ export default function AppointmentAttachments({
   }
 
   // ==========================================
+  // DOWNLOAD (all files)
+  // ==========================================
+  const handleDownload = async (file) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from(BUCKET)
+        .download(file.file_path)
+
+      if (error || !data) {
+        console.error('Download attachment error:', error)
+        toast.error('Unable to download attachment.')
+        return
+      }
+
+      const url = URL.createObjectURL(data)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = file.file_name || 'attachment'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      console.error('Download attachment error:', error)
+      toast.error('Something went wrong while downloading.')
+    }
+  }
+
+  // ==========================================
+  // REMOVE (only files added after booking)
+  // ==========================================
+  const canRemove = (file) =>
+    canUpload &&
+    file.source === 'after_booking' &&
+    Boolean(currentUserId) &&
+    file.uploaded_by === currentUserId
+
+  const handleRemove = async (file) => {
+    if (!canRemove(file)) return
+
+    const confirmed = window.confirm(
+      `Remove "${file.file_name}"? This cannot be undone.`
+    )
+    if (!confirmed) return
+
+    setRemovingId(file.id)
+
+    try {
+      // 1) Delete the database row first.
+      //    .select() lets us detect a silent block by security rules.
+      const { data: deletedRows, error: dbError } = await supabase
+        .from('service_task_attachments')
+        .delete()
+        .eq('id', file.id)
+        .eq('uploaded_by', currentUserId)
+        .eq('source', 'after_booking')
+        .select('id')
+
+      if (dbError) throw dbError
+
+      if (!deletedRows || deletedRows.length === 0) {
+        throw new Error('You are not allowed to remove this attachment.')
+      }
+
+      // 2) Then delete the stored file.
+      const { data: removedFiles, error: storageError } = await supabase.storage
+  .from(BUCKET)
+  .remove([file.file_path])
+
+if (storageError || !removedFiles || removedFiles.length === 0) {
+  console.error('Storage remove failed or was blocked:', storageError)
+  // Row is already deleted. The file is orphaned in storage.
+}
+
+      setFiles((current) => current.filter((item) => item.id !== file.id))
+      toast.success('Attachment removed.')
+    } catch (error) {
+      console.error('Remove attachment error:', error)
+      toast.error(error?.message || 'Unable to remove attachment.')
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
+  // ==========================================
   // UPLOAD (one or many files)
   // ==========================================
   const handleUpload = async (e) => {
@@ -140,7 +248,6 @@ export default function AppointmentAttachments({
       )
     }
 
-    // Validate every file first
     const validFiles = batch.filter((file) => {
       const isImage = file.type.startsWith('image/')
       const isVideo = file.type.startsWith('video/')
@@ -160,7 +267,6 @@ export default function AppointmentAttachments({
 
     if (!validFiles.length) return
 
-    // First attachment on an appointment must be a vehicle photo
     if (files.length === 0 && !validFiles[0].type.startsWith('image/')) {
       toast.error('The first attachment must be a vehicle photo.')
       return
@@ -215,6 +321,7 @@ export default function AppointmentAttachments({
                 uploaded_by: user.id,
                 uploaded_by_name: profile.name,
                 uploaded_by_role: profile.role,
+                source: 'after_booking', // <-- NEW
               },
             ])
 
@@ -224,7 +331,6 @@ export default function AppointmentAttachments({
         } catch (fileError) {
           console.error('Upload attachment error:', fileError)
 
-          // Don't leave an orphan file in storage
           if (uploadedPath) {
             await supabase.storage.from(BUCKET).remove([uploadedPath])
           }
@@ -286,7 +392,7 @@ export default function AppointmentAttachments({
             files.map((file) => (
               <div
                 key={file.id}
-                className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2.5"
+                className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
@@ -309,14 +415,41 @@ export default function AppointmentAttachments({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleView(file)}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 transition hover:bg-blue-600 hover:text-white"
-                >
-                  <Eye className="h-4 w-4" />
-                  View
-                </button>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleView(file)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 transition hover:bg-blue-600 hover:text-white"
+                  >
+                    <Eye className="h-4 w-4" />
+                    View
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(file)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 transition hover:bg-emerald-600 hover:text-white"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download
+                  </button>
+
+                  {canRemove(file) && (
+                    <button
+                      type="button"
+                      disabled={removingId === file.id}
+                      onClick={() => handleRemove(file)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 transition hover:bg-red-600 hover:text-white disabled:opacity-50"
+                    >
+                      {removingId === file.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}

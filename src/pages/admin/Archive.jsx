@@ -215,6 +215,32 @@ function getEligibilityStyle(value) {
   }
 }
 
+// Wraps the part of the text that matches the search in a yellow mark
+function highlightText(text, query) {
+  if (text === null || text === undefined || text === '') return text
+
+  const value = String(text)
+  const q = (query || '').trim()
+
+  if (!q) return value
+
+  // escape special characters so searches like "(" don't break
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = value.split(new RegExp(`(${escaped})`, 'gi'))
+
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark
+        key={i}
+        className="rounded bg-yellow-300 px-0.5 text-gray-900"
+      >
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  )
+}
 // Works whether confidence is stored as 0-1 or 0-100
 function formatConfidence(value) {
   if (value === null || value === undefined || value === '') return null
@@ -283,6 +309,7 @@ function formatSource(value) {
 function AppointmentInfoGrid({
   appointment,
   columns = 'grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4',
+  searchTerm = '',
 }) {
   const state = getState(appointment)
 
@@ -342,8 +369,11 @@ function AppointmentInfoGrid({
         header="border-gray-100 bg-gray-50 text-gray-700"
         iconBox="bg-gray-200 text-gray-600"
         items={[
-          { label: 'Name', value: appointment.customer_name, icon: User },
           {
+            label: 'Name',
+            value: highlightText(appointment.customer_name, searchTerm),
+            icon: User,
+          },          {
             label: 'Phone',
             value:
               appointment.mobile_number ||
@@ -367,7 +397,11 @@ function AppointmentInfoGrid({
         iconBox="bg-blue-100 text-blue-600"
         items={[
           { label: 'Vehicle', value: appointment.vehicle_model, icon: Car },
-          { label: 'Plate Number', value: appointment.plate_number, icon: Hash },
+          {
+            label: 'Plate Number',
+            value: highlightText(appointment.plate_number, searchTerm),
+            icon: Hash,
+          },
           { label: 'Vehicle Type', value: appointment.vehicle_type, icon: Car },
           { label: 'Fuel Type', value: appointment.fuel_type, icon: Fuel },
           {
@@ -420,8 +454,8 @@ function AppointmentInfoGrid({
         iconBox={recordTone.iconBox}
         items={[
           {
-            label: 'Appointment No.',
-            value: appointmentNumber,
+                        label: 'Appointment No.',
+            value: highlightText(appointmentNumber, searchTerm),
             icon: Hash,
             valueClass: 'font-bold tracking-wide',
           },
@@ -1960,27 +1994,30 @@ useEffect(() => {
   }
 
   const filteredAppointments = appointments.filter((appointment) => {
-    const search = searchTerm.toLowerCase().trim()
+        const search = searchTerm.toLowerCase().trim()
+
+    // "596", "appt-596" or "appt-000596" = exact appointment number search
+    const numberMatch = search.match(/^(?:appt-?)?(\d+)$/)
 
     const matchesSearch =
       !search ||
-      appointment.customer_name?.toLowerCase().includes(search) ||
-      appointment.mobile_number?.toLowerCase().includes(search) ||
-      appointment.phone?.toLowerCase().includes(search) ||
-      appointment.service_type?.toLowerCase().includes(search) ||
-      appointment.technician?.name?.toLowerCase().includes(search) ||
-      appointment.technician_role?.toLowerCase().includes(search) ||
-      appointment.plate_number?.toLowerCase().includes(search) ||
-      appointment.fuel_type?.toLowerCase().includes(search) ||
-      appointment.transmission_type?.toLowerCase().includes(search) ||
-      appointment.battery_voltage?.toLowerCase().includes(search) ||
-      appointment.vehicle_type?.toLowerCase().includes(search) ||
-      `APPT-${String(appointment.id).padStart(6, '0')}`
-        .toLowerCase()
-        .includes(search) ||
-      String(appointments.length - appointments.indexOf(appointment)).includes(
-        search
-      )
+      (numberMatch
+        ? Number(numberMatch[1]) === Number(appointment.id)
+        : appointment.customer_name?.toLowerCase().includes(search) ||
+          appointment.mobile_number?.toLowerCase().includes(search) ||
+          appointment.phone?.toLowerCase().includes(search) ||
+          appointment.service_type?.toLowerCase().includes(search) ||
+          appointment.technician?.name?.toLowerCase().includes(search) ||
+          appointment.technician_role?.toLowerCase().includes(search) ||
+          appointment.plate_number?.toLowerCase().includes(search) ||
+          appointment.fuel_type?.toLowerCase().includes(search) ||
+          appointment.transmission_type?.toLowerCase().includes(search) ||
+          appointment.battery_voltage?.toLowerCase().includes(search) ||
+          appointment.vehicle_type?.toLowerCase().includes(search) ||
+          `APPT-${String(appointment.id).padStart(6, '0')}`
+            .toLowerCase()
+            .includes(search))
+
 
     const matchesDate =
       !dateFilter || appointment.appointment_date === dateFilter
@@ -2004,6 +2041,20 @@ useEffect(() => {
   useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, statusFilter, dateFilter])
+
+    // When searching, scroll to the first matching card
+  useEffect(() => {
+    if (!searchTerm.trim()) return
+
+    // wait until the person stops typing and the list has updated
+    const timer = setTimeout(() => {
+      document
+        .querySelector('[id^="archive-appointment-"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }, 600)
+
+    return () => clearTimeout(timer)
+  }, [searchTerm])
 
   /* =========================================================
      NOTIFICATION TARGET: GO TO PAGE
@@ -2530,7 +2581,7 @@ useEffect(() => {
             </div>
 
             {/* Desktop dots (follow active filter) */}
-            <div className="mt-2 hidden flex-col items-center sm:flex">
+            <div className="mt-2 hidden">
               <div className="flex items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 shadow-[0_3px_12px_rgba(15,23,42,0.06)]">
                 {STATS.map((stat) => (
                   <button
@@ -2705,9 +2756,12 @@ useEffect(() => {
                 <div
                   key={appointment.id}
                   id={`archive-appointment-${appointment.id}`}
-                  className={`group overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md ${
-                    highlightedAppointmentId === appointment.id
-                      ? '!border-red-400 ring-4 ring-red-500/20 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]'
+                    className={`group scroll-mt-28 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md ${
+                                          highlightedAppointmentId === appointment.id
+                      ? '!border-red-500 !bg-red-50 ring-4 ring-red-500/40 animate-pulse'
+                      : searchTerm.trim() &&
+                        appointment.id === filteredAppointments[0]?.id
+                      ? '!border-yellow-400 ring-4 ring-yellow-300/50'
                       : ''
                   }`}
                 >
@@ -2728,8 +2782,8 @@ useEffect(() => {
                           {appointment.service_type || 'Service Appointment'}
                         </h3>
 
-                        <p className="mt-1 text-xs text-gray-400">
-                          Appointment #{appointmentNumber}
+                                                <p className="mt-1 text-xs text-gray-400">
+                                                    Appointment #{appointmentNumber}
                         </p>
                       </div>
                     </div>
@@ -2793,7 +2847,10 @@ useEffect(() => {
 
                     {/* CUSTOMER / VEHICLE / SERVICE / RECORD */}
 
-                    <AppointmentInfoGrid appointment={appointment} />
+                                        <AppointmentInfoGrid
+                      appointment={appointment}
+                      searchTerm={searchTerm}
+                    />
 
                     {/* CANCELLATION / REJECTION REASON */}
 

@@ -29,7 +29,7 @@ export default function DashboardLayout() {
   // CONFIGURATION
   // =========================================================
 
-  const ENABLE_INACTIVITY_LOGOUT = false// Set to false to disable inactivity logout feature
+  const ENABLE_INACTIVITY_LOGOUT = true// Set to false to disable inactivity logout feature
 
   // =========================================================
   // DROPDOWN STATE

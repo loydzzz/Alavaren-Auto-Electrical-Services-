@@ -1206,7 +1206,7 @@ export default function CreateTransaction() {
                 <div className="mb-4">
                   <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-900">
                     <Package className="h-4 w-4" />
-                    Stock Room: Additional Parts
+                    Additional Parts
                   </h4>
 
                   <p className="mt-1 text-xs text-emerald-700">
@@ -1233,54 +1233,63 @@ export default function CreateTransaction() {
                           className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm"
                         >
                           {/* PHOTO + DROPDOWN */}
-                          <div className="flex items-start gap-3">
-                            <PartThumb
-                              url={
-                                findInventory(item.inventory_id, item.item_name)
-                                  ?.image_url
-                              }
-                              name={item.item_name}
-                              size="h-16 w-16"
-                            />
+<div className="flex items-start gap-3">
+  {/* Image stretches to match label → select → stock height */}
+  <div className="flex w-[88px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-white">
+    {(() => {
+      const url = findInventory(item.inventory_id, item.item_name)?.image_url
+      return url ? (
+        <img
+          src={url}
+          alt={item.item_name || 'Part'}
+          className="h-full w-full object-contain p-1"
+        />
+      ) : (
+        <PartThumb
+  url={
+    inventoryItems.find(
+      (inv) => String(inv.id) === String(item.inventory_id)
+    )?.image_url ||
+    findInventory(item.inventory_id, item.item_name)?.image_url
+  }
+  name={item.item_name}
+  size="h-20 w-20"
+/>
+      )
+    })()}
+  </div>
 
-                            <div className="min-w-0 flex-1">
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                                Part Name
-                              </label>
+  <div className="min-w-0 flex-1">
+    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+      Part Name
+    </label>
 
-                              <select
-                                value={item.inventory_id || ''}
-                                onChange={(e) =>
-                                  selectStockItem(index, e.target.value)
-                                }
-                                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
-                              >
-                                <option value="">Select inventory item</option>
+    <select
+      value={item.inventory_id || ''}
+      onChange={(e) => selectStockItem(index, e.target.value)}
+      className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
+    >
+      <option value="">Select inventory item</option>
 
-                                {inventoryItems.map((inventory) => (
-                                  <option
-                                    key={inventory.id}
-                                    value={inventory.id}
-                                    disabled={
-                                      Number(inventory.quantity || 0) <= 0
-                                    }
-                                  >
-                                    {inventory.name}
-                                    {' — Stock: '}
-                                    {Number(inventory.quantity || 0)}
-                                    {' — ₱'}
-                                    {peso(inventory.price)}
-                                  </option>
-                                ))}
-                              </select>
+      {inventoryItems.map((inventory) => (
+        <option
+          key={inventory.id}
+          value={inventory.id}
+          disabled={Number(inventory.quantity || 0) <= 0}
+        >
+          {inventory.name}
+          {' — ₱'}
+          {peso(inventory.price)}
+        </option>
+      ))}
+    </select>
 
-                              {item.inventory_id && (
-                                <p className="mt-1 text-xs text-gray-500">
-                                  Available stock: {item.available_stock}
-                                </p>
-                              )}
-                            </div>
-                          </div>
+    {/* Always reserve the line so the height doesn't jump */}
+    <p className="mt-1 min-h-[1rem] text-xs text-gray-500">
+      {item.inventory_id ? `Available stock: ${item.available_stock}` : ''}
+    </p>
+  </div>
+</div>
 
                           {/* QTY / PRICE / SUBTOTAL / REMOVE */}
                           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:items-end">
@@ -1374,63 +1383,58 @@ export default function CreateTransaction() {
 
                   <div className="space-y-3">
                     {serviceItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-xl border border-blue-100 bg-white p-4"
-                      >
-                        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                                                    <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-1">
-                            <PartThumb
-                              url={
-                                findInventory(item.inventory_id, item.item_name)
-                                  ?.image_url
-                              }
-                              name={item.item_name}
-                            />
+  <div
+    key={item.id}
+    className="rounded-xl border border-blue-100 bg-white p-4"
+  >
+    {/* Item name row */}
+    <div className="flex min-w-0 items-center gap-3">
+      <PartThumb
+        url={findInventory(item.inventory_id, item.item_name)?.image_url}
+        name={item.item_name}
+      />
 
-                            <div className="min-w-0">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                                Item
-                              </p>
+      <div className="min-w-0">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          Item
+        </p>
+        <p className="mt-1 break-words font-bold text-gray-900">
+          {item.item_name}
+        </p>
+      </div>
+    </div>
 
-                              <p className="mt-1 break-words font-bold text-gray-900">
-                                {item.item_name}
-                              </p>
-                            </div>
-                          </div>
+    {/* Quantity, Unit Price, Subtotal underneath */}
+    <div className="mt-3 grid grid-cols-3 gap-4 border-t border-gray-100 pt-3">
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          Quantity
+        </p>
+        <p className="mt-1 font-semibold text-gray-900">
+          {Number(item.quantity)}
+        </p>
+      </div>
 
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                              Quantity
-                            </p>
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          Unit Price
+        </p>
+        <p className="mt-1 font-semibold text-gray-900">
+          ₱{peso(item.unit_price)}
+        </p>
+      </div>
 
-                            <p className="mt-1 font-semibold text-gray-900">
-                              {Number(item.quantity)}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                              Unit Price
-                            </p>
-
-                            <p className="mt-1 font-semibold text-gray-900">
-                              ₱{peso(item.unit_price)}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                              Subtotal
-                            </p>
-
-                            <p className="mt-1 font-bold text-blue-700">
-                              ₱{peso(item.subtotal)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          Subtotal
+        </p>
+        <p className="mt-1 font-bold text-blue-700">
+          ₱{peso(item.subtotal)}
+        </p>
+      </div>
+    </div>
+  </div>
+))}
                   </div>
 
                   <div className="mt-4 flex justify-end border-t border-blue-200 pt-3">

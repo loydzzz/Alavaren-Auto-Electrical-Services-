@@ -97,6 +97,36 @@ function getPathFromUrl(url) {
   return url ? url.split(`/${BUCKET}/`)[1] : null
 }
 
+// Highlights the part of the text that matches the search
+function HighlightText({ text, query }) {
+  const value = text ?? ''
+  const q = query?.trim()
+
+  if (!q) return <>{value}</>
+
+  // escape special characters so searching "(" or "." doesn't break
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = value.split(new RegExp(`(${safe})`, 'gi'))
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === q.toLowerCase() ? (
+          <mark
+            key={i}
+             className="rounded bg-yellow-300 px-0.5 text-gray-900"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  )
+}
+
+
 // Thumbnail with placeholder icon when there's no photo
 function ItemThumb({ item, onView }) {
   const overlay = (
@@ -187,6 +217,8 @@ export default function Inventory() {
   const [viewImage, setViewImage] = useState(null)
   const [viewItem, setViewItem] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [formFlash, setFormFlash] = useState(false)
+  const [searchHighlightId, setSearchHighlightId] = useState(null)
 
 
 
@@ -213,6 +245,42 @@ export default function Inventory() {
 
     setItems(data)
   }
+
+    // Highlights a card and scrolls to it (used after Add / Edit)
+  function highlightItem(id, status) {
+    // make sure search/filter can't hide the item
+    setSearch('')
+    setStatusFilter('all')
+
+    setHighlightId(id)
+    setHighlightStatus(status)
+
+    // wait a moment so the list has re-rendered, then scroll
+    setTimeout(() => {
+      document
+        .getElementById(`inventory-item-${id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 400)
+
+    // remove the highlight after a few seconds
+    setTimeout(() => setHighlightId(null), 4000)
+  }
+
+  // Scrolls to the Add/Edit form and flashes a highlight around it
+  function focusForm() {
+    setFormFlash(true)
+
+    // wait a moment so the form has rendered, then scroll to it
+    setTimeout(() => {
+      document
+        .getElementById('inventory-form')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 150)
+
+    // remove the highlight after 1.5 seconds
+    setTimeout(() => setFormFlash(false), 1500)
+  }
+
 
   async function handleAdd(e) {
     e.preventDefault()
@@ -402,8 +470,11 @@ if (notificationError) {
 
         toast.success('Item updated!')
 
+        const editedId = editingItem.id
+
         handleCancel()
-        fetchItems()
+        await fetchItems()
+        highlightItem(editedId, 'updated')
 
         return
       }
@@ -484,10 +555,11 @@ if (notificationError) {
 }
 
 
-      toast.success('Item added!')
+            toast.success('Item added!')
 
       handleCancel()
-      fetchItems()
+      await fetchItems()
+      highlightItem(insertedItem.id, 'newitem')
     } finally {
       setIsSaving(false)
     }
@@ -984,6 +1056,7 @@ function openEdit(item) {
   setImagePreview(item.image_url || null)
   setRemoveImage(false)
   setShowForm(true)
+  focusForm()
 }
 
 function handleCancel() {
@@ -1034,6 +1107,43 @@ function handleCancel() {
 
     return matchesSearch && matchesStatus
   })
+
+    // When searching: highlight the first matching card
+  useEffect(() => {
+    const q = search.trim()
+
+    if (!q) {
+      setSearchHighlightId(null)
+      return
+    }
+
+    // wait until the user stops typing
+    const timer = setTimeout(() => {
+            const query = q.toLowerCase()
+
+      // best match first: exact name, then starts with, then contains
+      const firstMatch =
+        filteredItems.find((i) => i.name?.toLowerCase() === query) ||
+        filteredItems.find((i) => i.name?.toLowerCase().startsWith(query)) ||
+        filteredItems.find((i) => i.name?.toLowerCase().includes(query)) ||
+        filteredItems[0]
+            if (!firstMatch) {
+        setSearchHighlightId(null)
+        return
+      }
+
+            setSearchHighlightId(firstMatch.id)
+
+      // remove the card highlight after 4 seconds
+      setTimeout(() => setSearchHighlightId(null), 4000)
+
+      document
+        .getElementById(`inventory-item-${firstMatch.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 400)
+
+    return () => clearTimeout(timer)
+  }, [search, statusFilter])
 
   useEffect(() => {
     const id = location.state?.inventoryId
@@ -1295,13 +1405,14 @@ function handleCancel() {
 
                 {/* Add */}
                 <button
-                  onClick={() => {
+                onClick={() => {
   setShowForm(true)
   setEditingItem(null)
   setForm(emptyForm)
   setImageFile(null)
   setImagePreview(null)
   setRemoveImage(false)
+  focusForm()
 }}
                   className="group flex items-center justify-center gap-2 bg-red-700 hover:bg-red-800 active:scale-[0.98] text-white px-5 py-2.5 rounded-lg font-semibold text-sm shadow-sm hover:shadow-md transition-all whitespace-nowrap"
                 >
@@ -1469,9 +1580,16 @@ function handleCancel() {
           {/* ================= ADD / EDIT FORM ================= */}
 
           {showForm && (
-            <form
-                           onSubmit={handleAdd}
-              className={`bg-white rounded-2xl shadow-lg border border-gray-200 border-t-4 ${formTheme.border} p-4 sm:p-6 mb-6 animate-[fadeIn_.2s_ease-out]`}
+                        <form
+              id="inventory-form"
+              onSubmit={handleAdd}
+              className={`scroll-mt-24 bg-white rounded-2xl shadow-lg border border-gray-200 border-t-4 ${formTheme.border} p-4 sm:p-6 mb-6 animate-[fadeIn_.2s_ease-out] transition-shadow duration-500 ${
+                formFlash
+                  ? editingItem
+                    ? 'ring-4 ring-blue-300'
+                    : 'ring-4 ring-purple-300'
+                  : ''
+              }`}
             >
 
               <div className="flex items-start gap-3 mb-5 sm:mb-6">
@@ -2054,9 +2172,11 @@ function handleCancel() {
                     key={item.id}
           id={`inventory-item-${item.id}`}
           className={`p-4 sm:p-5 transition-colors hover:bg-gray-50 ${
-                        highlightId === item.id
-              ? `${highlightStyles[highlightStatus] || highlightStyles.rejected} ring-2 ring-inset animate-pulse`
-              : item.quantity === 0
+  highlightId === item.id
+    ? `${highlightStyles[highlightStatus] || highlightStyles.rejected} ring-2 ring-inset animate-pulse`
+    : searchHighlightId === item.id
+    ? 'bg-red-50 ring-4 ring-inset ring-red-400'
+    : item.quantity === 0
               ? 'bg-red-50/40'
 
               : item.quantity <= item.low_stock_threshold
@@ -2077,8 +2197,8 @@ function handleCancel() {
 
                 <div className="flex items-center gap-2 min-w-0">
                   <h4 className="font-bold text-gray-900 truncate min-w-0">
-                    {item.name}
-                  </h4>
+  <HighlightText text={item.name} query={search} />
+</h4>
 
                                     <span
                     className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-bold ${status.color}`}
@@ -2089,11 +2209,7 @@ function handleCancel() {
                                   
                 </div>
 
-                {item.category && (
-                  <span className="inline-flex mt-1 bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[11px] font-semibold">
-                    {item.category}
-                  </span>
-                )}
+                <HighlightText text={item.category} query={search} />
 
                 <div className="flex items-start gap-6 mt-3">
   <div className="w-24 sm:w-28">

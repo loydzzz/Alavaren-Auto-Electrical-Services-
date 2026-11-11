@@ -2108,6 +2108,12 @@ async function handleRemoveCover() {
           object-position: center;
         }
 
+        .profile-avatar-image.avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
         @media (min-width: 640px) {
           .profile-avatar-frame {
             width: 7rem;
@@ -2348,14 +2354,14 @@ async function handleRemoveCover() {
                           className="profile-avatar-image"
                         />
                       ) : (
-                        <div className="profile-avatar-image flex items-center justify-center bg-gradient-to-br from-white via-slate-50 to-slate-100">
-                          <span
-                            className={`text-3xl font-black tracking-tight ${roleVisual.accent} sm:text-4xl`}
-                          >
-                            {initials}
-                          </span>
-                        </div>
-                      )}
+  <div className="flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br from-white via-slate-50 to-slate-100">
+    <span
+      className={`text-3xl font-black leading-none tracking-tight ${roleVisual.accent} sm:text-4xl`}
+    >
+      {initials}
+    </span>
+  </div>
+)}
                     </div>
 
                     <label

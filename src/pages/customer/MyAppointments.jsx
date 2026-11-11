@@ -2031,6 +2031,59 @@ function formatTime12(value) {
   }
 }
 
+// Wraps the part of the text that matches the search in a yellow mark
+function highlightText(text, query, fading = false) {
+  if (text === null || text === undefined || text === '') return text
+
+  const value = String(text)
+  const q = (query || '').trim()
+
+  if (!q) return value
+
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = value.split(new RegExp(`(${escaped})`, 'gi'))
+
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark
+        key={i}
+        className={`rounded px-0.5 text-slate-900 transition-colors duration-500 ${
+          fading ? 'bg-yellow-300/0' : 'bg-yellow-300'
+        }`}
+      >
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  )
+}
+
+function highlightDate(rawDate, query, fading = false) {
+  const displayed = formatLongDate(rawDate)
+  const q = (query || '').trim().toLowerCase()
+
+  if (!q || !rawDate) return displayed
+
+  if (displayed.toLowerCase().includes(q)) {
+    return highlightText(displayed, query, fading)
+  }
+
+  if (String(rawDate).toLowerCase().includes(q)) {
+    return (
+      <mark
+        className={`rounded px-0.5 text-slate-900 transition-colors duration-500 ${
+          fading ? 'bg-yellow-300/0' : 'bg-yellow-300'
+        }`}
+      >
+        {displayed}
+      </mark>
+    )
+  }
+
+  return displayed
+}
+
 // =========================================================
 // DETAIL ITEM (icon + label + value)
 // =========================================================
@@ -2087,6 +2140,9 @@ export default function MyAppointments() {
   const appointmentSummaryScrollRef = useRef(null)
   const [activeAppointmentSummary, setActiveAppointmentSummary] = useState(0)
   const [highlightedAppointmentId, setHighlightedAppointmentId] = useState(null)
+  const [highlightTerm, setHighlightTerm] = useState('')
+const [highlightCardId, setHighlightCardId] = useState(null)
+const [highlightFading, setHighlightFading] = useState(false)
 
   const [customerConversationMap, setCustomerConversationMap] =
     useState({})
@@ -2137,6 +2193,9 @@ export default function MyAppointments() {
   
   const processedCustomerMessageIdsRef =
   useRef(new Set())
+
+  const openedFromNotificationRef =
+  useRef(false)
 
 
   // =========================================================
@@ -2835,6 +2894,7 @@ const searchableText = [
   apt.vehicle_model,
   apt.service_type,
   apt.appointment_date,
+  formatLongDate(apt.appointment_date),   // <-- add this line
   apt.appointment_time,
   apt.notes,
 ]
@@ -2889,6 +2949,39 @@ return searchableText.includes(
       }
     )
   }
+
+
+  // =========================================================
+// CLEAR NOTIFICATION HIGHLIGHT
+// =========================================================
+
+function clearNotificationHighlight({
+  closeConversation = true,
+} = {}) {
+  setSelectedAppointmentId(null)
+  setHighlightedAppointmentId(null)
+  setTargetAppointmentId(null)
+
+  // Close the chat only if the notification opened it
+  if (
+    closeConversation &&
+    openedFromNotificationRef.current
+  ) {
+    openedFromNotificationRef.current = false
+
+    setShowMessaging(false)
+    activeConversationRef.current = null
+    setActiveConversation(null)
+  }
+
+  // Remove the notification data from the router state
+  if (location.state?.appointmentId) {
+    navigate(location.pathname, {
+      replace: true,
+      state: {},
+    })
+  }
+}
 
 
   // =========================================================
@@ -3088,9 +3181,11 @@ if (effectiveStatus === 'completed') {
     nextConversation
   )
 
-  setShowMessaging(
+    setShowMessaging(
     true
   )
+
+  openedFromNotificationRef.current = true
 
 
   // =======================================================
@@ -3133,9 +3228,43 @@ if (effectiveStatus === 'completed') {
   })
 }, [selectedAppointmentId, filteredAppointments])
 
+// Keeps the yellow highlight alive briefly after the search is cleared,
+// so it can fade out instead of vanishing
+const firstMatchId = filteredAppointments[0]?.id ?? null
 
+useEffect(() => {
+  if (searchTerm.trim()) {
+    setHighlightTerm(searchTerm)
+    setHighlightCardId(firstMatchId)
+    setHighlightFading(false)
+    return
+  }
 
+  if (!highlightTerm && highlightCardId === null) return
 
+  setHighlightFading(true)
+
+  const timer = setTimeout(() => {
+    setHighlightTerm('')
+    setHighlightCardId(null)
+    setHighlightFading(false)
+  }, 700)
+
+  return () => clearTimeout(timer)
+}, [searchTerm, firstMatchId])
+
+// When searching, scroll to the first matching card
+useEffect(() => {
+  if (!searchTerm.trim()) return
+
+  const timer = setTimeout(() => {
+    document
+      .querySelector('[id^="appointment-"]')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, 600)
+
+  return () => clearTimeout(timer)
+}, [searchTerm])
   // =========================================================
   // VISIBLE APPOINTMENTS
   // =========================================================
@@ -5800,10 +5929,20 @@ const activeCount =
             <input
   type="text"
   value={searchTerm}
-  onChange={(e) =>
-    setSearchTerm(e.target.value)
+  onChange={(e) => {
+  const value = e.target.value
+
+  setSearchTerm(value)
+
+  // Typing hands the highlight over to the yellow search highlight.
+  // The open conversation is left alone.
+  if (value.trim()) {
+    clearNotificationHighlight({
+      closeConversation: false,
+    })
   }
-  placeholder="Search appointment no., plate, vehicle, service..."
+}}
+  placeholder="Search APPT-XXXXXX, plate, date, vehicle, service..."
   className="w-full rounded-2xl border border-white/90 bg-white/65 py-3.5 pl-11 pr-11 text-sm text-slate-800 shadow-[0_15px_40px_rgba(15,23,42,0.07)] outline-none backdrop-blur-2xl transition placeholder:text-slate-400 focus:border-red-300 focus:bg-white/85 focus:ring-4 focus:ring-red-500/5 sm:py-4"
 />
 
@@ -5812,9 +5951,10 @@ const activeCount =
 
               <button
                 type="button"
-                onClick={() =>
-                  setSearchTerm('')
-                }
+                onClick={() => {
+  setSearchTerm('')
+  clearNotificationHighlight()
+}}
                 className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
                 aria-label="Clear search"
               >
@@ -5877,9 +6017,11 @@ const activeCount =
 
             <button
               type="button"
-              onClick={() =>
-                setAppointmentFilter('all')
-              }
+              onClick={() => {
+  setAppointmentFilter('all')
+  setSearchTerm('')
+  clearNotificationHighlight()
+}}
               className="text-[10px] font-black text-red-500 transition hover:text-red-600"
             >
               Clear
@@ -6100,14 +6242,18 @@ const arrangementBadge =
                 return (
 
                   <div
-                    key={apt.id}
-                    id={`appointment-${apt.id}`}
-className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_24px_70px_rgba(15,23,42,0.09)] backdrop-blur-2xl transition-all duration-500 ${
-  selectedAppointmentId === apt.id
-    ? 'border border-red-400 ring-4 ring-red-500/20 shadow-[0_0_0_4px_rgba(239,68,68,0.08),0_28px_80px_rgba(220,38,38,0.16)]'
-    : 'border border-white/90'
-} hover:border-white hover:bg-white/80 hover:shadow-[0_28px_80px_rgba(15,23,42,0.12)]`}
-                  >
+  key={apt.id}
+  id={`appointment-${apt.id}`}
+  className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_24px_70px_rgba(15,23,42,0.09)] backdrop-blur-2xl transition-all duration-500 ${
+    highlightCardId === apt.id
+  ? highlightFading
+    ? 'border border-yellow-400/0 ring-4 ring-yellow-300/0'
+    : 'border border-yellow-400 ring-4 ring-yellow-300/50'
+  : selectedAppointmentId === apt.id
+      ? 'border border-red-400 ring-4 ring-red-500/20 shadow-[0_0_0_4px_rgba(239,68,68,0.08),0_28px_80px_rgba(220,38,38,0.16)]'
+      : 'border border-white/90'
+  } hover:border-white hover:bg-white/80 hover:shadow-[0_28px_80px_rgba(15,23,42,0.12)]`}
+>
 
                     {/* STATUS ACCENT */}
 
@@ -6191,7 +6337,7 @@ className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_
                             
 
                            <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-  Appointment No. {appointmentNumber}
+Appointment No. {highlightText(appointmentNumber, highlightTerm, highlightFading)}
 </p>
 
                            {/* DATE + TIME */}
@@ -6204,7 +6350,7 @@ className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_
       Date
     </span>
     <span className="font-semibold text-slate-800">
-      {formatLongDate(apt.appointment_date)}
+{highlightDate(apt.appointment_date, highlightTerm, highlightFading)}
     </span>
   </span>
 
@@ -6254,8 +6400,10 @@ className={`group relative overflow-hidden rounded-[28px] bg-white/70 shadow-[0_
         </span>
 
         <span className="text-sm font-bold leading-none text-slate-800">
-          {value}
-        </span>
+  {label === 'Plate No.'
+    ? highlightText(value, highlightTerm, highlightFading)
+    : value}
+</span>
 
       </div>
 

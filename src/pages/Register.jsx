@@ -34,7 +34,7 @@ const PROFILE_EDIT_COOLDOWN_DAYS = 60
 // Must match the OTP length set in Supabase (default is 6)
 const OTP_LENGTH = 6
 // Seconds the customer must wait before requesting another code
-const RESEND_SECONDS = 60
+const RESEND_SECONDS = 90
 // Wrong attempts allowed before the customer must request a new code
 const MAX_OTP_ATTEMPTS = 5
 
@@ -119,12 +119,21 @@ const TERMS = [
 // Accepts only a valid email whose domain is in the list
 // =====================================================
 
+// letters/numbers, optionally separated by a single . _ or -
+
+const EMAIL_LOCAL_REGEX = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/
+
 function isAllowedEmail(email) {
   const value = String(email || '').trim().toLowerCase()
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return false
 
-  const domain = value.split('@')[1]
+  const [name, domain] = value.split('@')
+
+  if (!EMAIL_LOCAL_REGEX.test(name)) return false
+
+  // Gmail only allows letters, numbers, and dots
+  if (domain === 'gmail.com' && !/^[a-z0-9.]+$/.test(name)) return false
 
   return ALLOWED_EMAIL_DOMAINS.includes(domain)
 }

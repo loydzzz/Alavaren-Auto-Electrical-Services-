@@ -337,6 +337,30 @@ function formatTimestamp(value) {
   return `${datePart} at ${timePart}`
 }
 
+const INITIAL_FORM = {
+  vehicle_model: '',
+  plate_number: '',
+
+  fuel_type: '',
+  battery_voltage: '',
+  transmission_type: '',
+
+  service_type: '',
+  date: '',
+  time: '',
+  notes: '',
+
+  customer_name: '',
+  mobile_number: '',
+  customer_address: '',
+
+  region: '',
+  province: '',
+  cityMunicipality: '',
+  barangay: '',
+  zipCode: '',
+  street: '',
+}
 
 export default function Booking() {
   const navigate = useNavigate()
@@ -456,34 +480,7 @@ const [serviceArrangement, setServiceArrangement] = useState('')
     address: '',
   })
 
-  const [form, setForm] = useState({
-  vehicle_model: '',
-  plate_number: '',
-
-// Vehicle information
-  fuel_type: '',
-  battery_voltage: '',
-  transmission_type: '',
-
-  service_type: '',
-  date: '',
-  time: '',
-  notes: '',
-
-  // Walk-in customer
-  customer_name: '',
-  mobile_number: '',
-  customer_address: '',
-
-  // Walk-in address fields
-  region: '',
-  province: '',
-  cityMunicipality: '',
-  barangay: '',
-  zipCode: '',
-  street: '',
-})
-
+const [form, setForm] = useState(INITIAL_FORM)
 // Freezes "now" so the 10:23 option doesn't change every re-render
 const slotNow = useMemo(
   () => new Date(),
@@ -1503,6 +1500,7 @@ uploaded_by_name:
   uploaderName,
 uploaded_by_role:
   uploaderRole,
+source: 'booking',
 
               },
             ])
@@ -1939,21 +1937,12 @@ if (notificationError) {
 
         // Reset the form AFTER
         // saving submittedBooking.
-        setForm({
-  vehicle_model: '',
-  plate_number: '',
+        setForm(INITIAL_FORM)
 
-  // Vehicle information
-  fuel_type: '',
-  battery_voltage: '',
-  transmission_type: '',
-
-  customer_address: '',
-  service_type: '',
-  date: '',
-  time: '',
-  notes: '',
-})
+        setServiceArrangement('')
+setProvinces([])
+setCitiesMunicipalities([])
+setBarangays([])
 
         setShowSuccess(true)
 

@@ -80,9 +80,26 @@ function SpecializedCard({ service, number }) {
      that card slides to the CENTER of the screen
    - the rest of the screen goes dark (plain black tint, no blur)
    - there is only ever ONE copy of each card - nothing is cloned
-   - move the mouse away to the left or right side, tap the dark
-     area, scroll the page, or press Esc to continue scrolling
+
+   MANUAL CONTROLS (new)
+   - PHONE / TABLET : swipe left or right with your finger
+                      (with a little momentum when you let go);
+                      swiping up/down still scrolls the page
+   - MOUSE          : roll the mouse wheel, or click-and-drag
+   - LAPTOP TOUCHPAD: two-finger swipe left/right
+   - after you stop touching it, the auto scroll continues by itself
+
+   TO CONTINUE SCROLLING FROM A FOCUSED CARD
+   - move the mouse off the card, tap the dark area, swipe,
+     scroll the page, or press Esc
 ========================================================= */
+
+const HOLD_AFTER_INTERACTION = 1200 // ms the auto scroll waits after you stop
+const MOMENTUM_FRICTION = 5         // higher = stops sooner
+const WHEEL_IMPULSE = 6             // higher = mouse wheel slides farther
+const MAX_VELOCITY = 4000           // px per second
+
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 
 export default function SpecializedCarousel({
   services,
@@ -91,10 +108,15 @@ export default function SpecializedCarousel({
   focusScale = 1,      // 1 = no enlarging (try 1.3 to make the focused card bigger)
   dimColor = 'rgba(0,0,0,0.62)',
   leaveDelay = 400,    // ms before scrolling continues if the mouse is off the card
+  // 'auto'   = mouse wheel slides the cards, a touchpad's up/down scroll
+  //            still scrolls the page (touchpad left/right slides the cards)
+  // 'always' = every wheel / touchpad movement over the cards slides them
+  wheelMode = 'auto',
 }) {
 
   const n = services.length
 
+  const rowRef = useRef(null)
   const trackRef = useRef(null)
   const cardRefs = useRef([])
   const xRef = useRef(0)
@@ -107,11 +129,45 @@ export default function SpecializedCarousel({
   const outsideSinceRef = useRef(null)
   const lastScrollRef = useRef(0)
 
+  // manual scrolling
+  const velRef = useRef(0)            // momentum, px per second
+  const draggingRef = useRef(false)
+  const holdUntilRef = useRef(0)      // auto scroll waits until this time
+  const lastInteractRef = useRef(0)
+  const dragRef = useRef({
+    down: false,
+    moved: false,
+    id: null,
+    startX: 0,
+    startY: 0,
+    startTrack: 0,
+    lastX: 0,
+    lastT: 0,
+  })
+
   const [focusKey, setFocusKey] = useState(null)
   const [scale, setScale] = useState(1)
 
   // three copies so the loop never shows a gap
   const items = [...services, ...services, ...services]
+
+
+  // ---------- move the track (keeps the loop endless) ----------
+
+  const applyX = () => {
+    const loop = loopRef.current
+
+    // wrap only while nothing is focused
+    if (loop && focusKeyRef.current === null) {
+      while (xRef.current <= -loop) xRef.current += loop
+      while (xRef.current > 0) xRef.current -= loop
+    }
+
+    if (trackRef.current) {
+      trackRef.current.style.transform =
+        `translate3d(${xRef.current}px,0,0)`
+    }
+  }
 
 
   // ---------- measure one full loop ----------
@@ -129,7 +185,7 @@ export default function SpecializedCarousel({
   }, [n])
 
 
-  // ---------- auto scroll + glide to center ----------
+  // ---------- auto scroll + glide to center + momentum ----------
 
   useEffect(() => {
     const reduceMotion = window.matchMedia(
@@ -143,9 +199,6 @@ export default function SpecializedCarousel({
       const dt = Math.min((now - last) / 1000, 0.1)
       last = now
 
-      const loop = loopRef.current
-      let moved = false
-
       if (targetRef.current !== null) {
         // glide the focused card to the center
         const diff = targetRef.current - xRef.current
@@ -157,21 +210,27 @@ export default function SpecializedCarousel({
           xRef.current += diff * (1 - Math.pow(0.0005, dt))
         }
 
-        moved = true
-      } else if (!pausedRef.current && !reduceMotion && loop) {
-        xRef.current -= speed * dt
-        moved = true
-      }
+        applyX()
+      } else if (draggingRef.current) {
+        // the finger / mouse is moving the track - nothing to do here
+      } else if (Math.abs(velRef.current) > 8) {
+        // momentum after a swipe or a mouse wheel roll
+        xRef.current += velRef.current * dt
+        velRef.current *= Math.exp(-MOMENTUM_FRICTION * dt)
+        holdUntilRef.current = Date.now() + HOLD_AFTER_INTERACTION
+        applyX()
+      } else {
+        velRef.current = 0
 
-      // keep the loop endless (only while nothing is focused)
-      if (!pausedRef.current && loop) {
-        while (xRef.current <= -loop) xRef.current += loop
-        while (xRef.current > 0) xRef.current -= loop
-      }
-
-      if (moved && trackRef.current) {
-        trackRef.current.style.transform =
-          `translate3d(${xRef.current}px,0,0)`
+        if (
+          !pausedRef.current &&
+          !reduceMotion &&
+          loopRef.current &&
+          Date.now() >= holdUntilRef.current
+        ) {
+          xRef.current -= speed * dt
+          applyX()
+        }
       }
 
       raf = requestAnimationFrame(tick)
@@ -179,6 +238,7 @@ export default function SpecializedCarousel({
 
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speed])
 
 
@@ -194,10 +254,72 @@ export default function SpecializedCarousel({
   }, [])
 
 
+  // ---------- mouse wheel + touchpad two-finger swipe ----------
+
+  useEffect(() => {
+    const el = rowRef.current
+    if (!el) return
+
+    const onWheel = (e) => {
+      if (e.ctrlKey) return // pinch-zoom: leave it alone
+
+      // normalise line / page based wheels to pixels
+      const unit =
+        e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerWidth : 1
+      const dx = e.deltaX * unit
+      const dy = e.deltaY * unit
+
+      const horizontal = Math.abs(dx) > Math.abs(dy)
+
+      // a real mouse wheel sends big, whole-number, up/down steps
+      const looksLikeMouseWheel =
+        e.deltaMode !== 0 ||
+        (e.deltaX === 0 &&
+          Number.isInteger(e.deltaY) &&
+          Math.abs(e.deltaY) >= 40)
+
+      // touchpad up/down: let the page scroll normally
+      if (!horizontal && wheelMode !== 'always' && !looksLikeMouseWheel) return
+
+      e.preventDefault()
+
+      if (focusKeyRef.current !== null) releaseCard()
+
+      targetRef.current = null
+      lastInteractRef.current = Date.now()
+      holdUntilRef.current = Date.now() + HOLD_AFTER_INTERACTION
+
+      if (horizontal) {
+        // touchpad swipe: the OS already adds its own smooth momentum
+        velRef.current = 0
+        xRef.current -= dx
+        applyX()
+      } else {
+        // mouse wheel: push the cards, they glide to a stop
+        velRef.current = clamp(
+          velRef.current - dy * WHEEL_IMPULSE,
+          -MAX_VELOCITY,
+          MAX_VELOCITY
+        )
+      }
+    }
+
+    // must be non-passive so preventDefault can stop the page from scrolling
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wheelMode])
+
+
   // ---------- focus / release ----------
 
   const openCard = (key) => {
     if (focusKeyRef.current !== null) return
+
+    // the person is dragging / rolling the wheel / coasting - not a real hover
+    if (draggingRef.current) return
+    if (Math.abs(velRef.current) > 20) return
+    if (Date.now() - lastInteractRef.current < 700) return
 
     // the page is scrolling under the cursor - not a real hover/tap
     if (Date.now() - lastScrollRef.current < 250) return
@@ -215,6 +337,7 @@ export default function SpecializedCarousel({
     // never wider than the screen
     setScale(Math.min(focusScale, (viewportWidth - 32) / r.width))
 
+    velRef.current = 0
     pausedRef.current = true
     focusKeyRef.current = key
     openedAtRef.current = Date.now()
@@ -297,6 +420,125 @@ export default function SpecializedCarousel({
   }, [focusKey])
 
 
+  // ---------- swipe / drag (finger, pen or mouse) ----------
+
+  const onRowPointerDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+
+    // touching the row stops any coasting
+    velRef.current = 0
+    holdUntilRef.current = Date.now() + HOLD_AFTER_INTERACTION
+
+    dragRef.current = {
+      down: true,
+      moved: false,
+      id: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startTrack: xRef.current,
+      lastX: e.clientX,
+      lastT: performance.now(),
+    }
+  }
+
+  const onRowPointerMove = (e) => {
+    const d = dragRef.current
+    if (!d.down || e.pointerId !== d.id) return
+
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+
+    if (!d.moved) {
+      // not a drag yet - wait for a clear movement
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+
+      // mostly vertical: leave it to the page
+      if (Math.abs(dy) > Math.abs(dx)) {
+        d.down = false
+        return
+      }
+
+      // the drag begins here
+      d.moved = true
+      draggingRef.current = true
+      targetRef.current = null
+
+      if (focusKeyRef.current !== null) releaseCard()
+
+      // start from where the track is right now (no jump)
+      d.startX = e.clientX
+      d.startTrack = xRef.current
+      d.lastX = e.clientX
+      d.lastT = performance.now()
+
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId)
+      } catch (err) {
+        /* not supported - dragging still works inside the row */
+      }
+    }
+
+    // follow the finger
+    xRef.current = d.startTrack + (e.clientX - d.startX)
+    applyX()
+
+    // remember how fast it is moving (for the momentum on release)
+    const now = performance.now()
+    const dtMs = now - d.lastT
+
+    if (dtMs > 0) {
+      const instant = ((e.clientX - d.lastX) / dtMs) * 1000
+      velRef.current = 0.6 * instant + 0.4 * velRef.current
+    }
+
+    d.lastX = e.clientX
+    d.lastT = now
+  }
+
+  const endDrag = (e, cancelled) => {
+    const d = dragRef.current
+    if (!d.down || e.pointerId !== d.id) return
+
+    const wasDrag = d.moved
+    d.down = false
+    d.moved = false
+
+    if (wasDrag) {
+      draggingRef.current = false
+
+      // finger rested before letting go: no momentum
+      const idle = performance.now() - d.lastT
+      velRef.current =
+        cancelled || idle > 80
+          ? 0
+          : clamp(velRef.current, -MAX_VELOCITY, MAX_VELOCITY)
+
+      lastInteractRef.current = Date.now()
+      holdUntilRef.current = Date.now() + HOLD_AFTER_INTERACTION
+
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch (err) {
+        /* already released */
+      }
+      return
+    }
+
+    // ----- it was a tap -----
+    if (cancelled) return
+    if (e.pointerType === 'mouse') return // the mouse uses hover instead
+
+    // phones / tablets: tap to enlarge, tap again to continue
+    if (focusKeyRef.current !== null) {
+      releaseCard()
+      return
+    }
+
+    const cardEl = e.target.closest ? e.target.closest('[data-card]') : null
+    if (cardEl) openCard(Number(cardEl.getAttribute('data-card')))
+  }
+
+
   // =========================================================
   // RENDER
   // =========================================================
@@ -326,6 +568,7 @@ export default function SpecializedCarousel({
       {/* ---------- scrolling row ---------- */}
 
       <div
+        ref={rowRef}
         className="
           relative
           -mx-5
@@ -341,8 +584,13 @@ export default function SpecializedCarousel({
           zIndex: 6,
           opacity: visible ? 1 : 0,
           transition: 'opacity 600ms ease-out',
-          touchAction: 'pan-y',
+          touchAction: 'pan-y',          // up/down = page, left/right = carousel
+          overscrollBehaviorX: 'contain', // no browser "back" swipe from the row
         }}
+        onPointerDown={onRowPointerDown}
+        onPointerMove={onRowPointerMove}
+        onPointerUp={(e) => endDrag(e, false)}
+        onPointerCancel={(e) => endDrag(e, true)}
       >
 
         <div
@@ -357,6 +605,7 @@ export default function SpecializedCarousel({
             return (
               <div
                 key={i}
+                data-card={i}
                 ref={(el) => {
                   cardRefs.current[i] = el
                 }}
@@ -391,14 +640,6 @@ export default function SpecializedCarousel({
                 }}
                 onPointerMove={(e) => {
                   if (e.pointerType === 'mouse') openCard(i)
-                }}
-                onPointerDown={(e) => {
-                  // phones / tablets: tap to enlarge, tap again to continue
-                  if (e.pointerType === 'mouse') return
-
-                  // tapping any other card also continues the scroll
-                  if (focusKeyRef.current !== null) releaseCard()
-                  else openCard(i)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {

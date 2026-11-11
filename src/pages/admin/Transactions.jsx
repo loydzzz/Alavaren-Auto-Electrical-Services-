@@ -103,6 +103,30 @@ const joinDateTime = (date, time) => {
   return `${date} at ${time}`
 }
 
+// Wraps the part of the text that matches the search in a yellow mark
+const highlightText = (text, query) => {
+  if (text === null || text === undefined || text === '') return text
+
+  const value = String(text)
+  const q = (query || '').trim()
+
+  if (!q) return value
+
+  // escape special characters so searches like "(" don't break
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = value.split(new RegExp(`(${escaped})`, 'gi'))
+
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark key={i} className="rounded bg-yellow-300 px-0.5 text-gray-900">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  )
+}
+
 /* =========================================================
    RECEIPT BUILDER (shared by manual print + auto print)
 ========================================================= */
@@ -653,6 +677,20 @@ export default function Transactions() {
     fetchTransactions()
   }, [])
 
+    // When searching, scroll to the first matching card
+  useEffect(() => {
+    if (!search.trim()) return
+
+    // wait until the person stops typing and the list has updated
+    const timer = setTimeout(() => {
+      document
+        .querySelector('[id^="transaction-"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }, 600)
+
+    return () => clearTimeout(timer)
+  }, [search])
+
   // ==============================
   // DELETE TRANSACTION + RESTORE INVENTORY
   // ==============================
@@ -719,6 +757,11 @@ export default function Transactions() {
         return
       }
 
+            // APPOINTMENT THIS TRANSACTION BELONGS TO
+      const appointmentIdForActivity =
+        transactions.find((t) => t.id === transactionId)?.appointment_id ||
+        null
+
       // RESTORE INVENTORY ITEMS
       const inventoryItems = (transactionItems || []).filter(
         (item) => item.inventory_id !== null
@@ -778,6 +821,14 @@ export default function Transactions() {
           return
         }
 
+                // SERVICE ITEM IS NO LONGER DEDUCTED
+        if (transactionItem.service_task_item_id) {
+          await supabase
+            .from('service_task_items')
+            .update({ stock_deducted: false })
+            .eq('id', transactionItem.service_task_item_id)
+        }
+
         // CREATE INVENTORY ACTIVITY
         const { error: activityError } = await supabase
           .from('inventory_transactions')
@@ -791,7 +842,8 @@ export default function Transactions() {
               old_price: Number(inventoryItem.price || 0),
               new_price: Number(inventoryItem.price || 0),
               performed_by: userProfile.id,
-              performed_by_role: userProfile.role,
+                            performed_by_role: userProfile.role,
+              appointment_id: appointmentIdForActivity,
             },
           ])
 
@@ -901,22 +953,47 @@ export default function Transactions() {
   // ==============================
   // FILTER TRANSACTIONS
   // ==============================
-  const filteredTransactions = transactions.filter((transaction) => {
     const searchText = search.toLowerCase().trim()
 
-    const appointmentNumber = transaction.appointments?.id
-      ? `APPT-${String(transaction.appointments.id).padStart(6, '0')}`
+  // "596", "appt-596" or "appt-000596" = appointment number search
+  const numberMatch = searchText.match(/^(?:appt-?)?(\d+)$/)
+
+  // what to mark in yellow (for number searches, just the digits)
+  const highlightQuery = numberMatch ? numberMatch[1] : search
+
+  const getApptNo = (t) =>
+    t.appointments?.id
+      ? `appt-${String(t.appointments.id).padStart(6, '0')}`
       : ''
 
+  // exact match on receipt number, appointment number or customer name
+  const isExactMatch = (t) =>
+    t.receipt_number?.toLowerCase().trim() === searchText ||
+    getApptNo(t) === searchText ||
+    t.customer_name?.toLowerCase().trim() === searchText
+
+  // if any exact match exists, show only exact matches
+  const hasExactMatch =
+    !!searchText && !numberMatch && transactions.some(isExactMatch)
+
+  const filteredTransactions = transactions.filter((transaction) => {
     const matchesSearch =
       !searchText ||
-      transaction.receipt_number?.toLowerCase().includes(searchText) ||
-      appointmentNumber.toLowerCase().includes(searchText) ||
-      transaction.customer_name?.toLowerCase().includes(searchText) ||
-      transaction.vehicle_model?.toLowerCase().includes(searchText) ||
-      transaction.plate_number?.toLowerCase().includes(searchText) ||
-      transaction.service_type?.toLowerCase().includes(searchText) ||
-      transaction.technician_name?.toLowerCase().includes(searchText)
+      (numberMatch
+        ? Number(numberMatch[1]) === Number(transaction.appointments?.id) ||
+          transaction.receipt_number?.toLowerCase().trim() === searchText
+        : hasExactMatch
+        ? isExactMatch(transaction)
+        : transaction.receipt_number?.toLowerCase().includes(searchText) ||
+          getApptNo(transaction).includes(searchText) ||
+          transaction.customer_name?.toLowerCase().includes(searchText) ||
+          transaction.vehicle_model?.toLowerCase().includes(searchText) ||
+          transaction.plate_number?.toLowerCase().includes(searchText) ||
+          transaction.service_type?.toLowerCase().includes(searchText) ||
+          transaction.technician_name?.toLowerCase().includes(searchText))
+
+
+
 
     const bookingSource =
       transaction.appointments?.booking_source?.toLowerCase()
@@ -1245,9 +1322,15 @@ export default function Transactions() {
               const appointment = transaction.appointments || {}
 
               return (
-                <article
+                              <article
                   key={transaction.id}
-                  className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-xl"
+                  id={`transaction-${transaction.id}`}
+                  className={`group scroll-mt-28 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-xl ${
+                    search.trim() &&
+                    transaction.id === filteredTransactions[0]?.id
+                      ? '!border-yellow-400 ring-4 ring-yellow-300/50'
+                      : ''
+                  }`}
                 >
                   {/* TRANSACTION HEADER */}
                   <div className="border-b border-slate-100 p-4 sm:p-5">
@@ -1263,8 +1346,11 @@ export default function Transactions() {
                             Receipt Number
                           </p>
 
-                          <h3 className="mt-0.5 truncate text-sm font-bold text-slate-900 sm:text-base">
-                            {transaction.receipt_number || 'N/A'}
+                                                   <h3 className="mt-0.5 truncate text-sm font-bold text-slate-900 sm:text-base">
+                            {highlightText(
+                              transaction.receipt_number,
+                              highlightQuery
+                            ) || 'N/A'}
                           </h3>
                         </div>
                       </div>
@@ -1329,8 +1415,8 @@ export default function Transactions() {
         <p className="text-xs font-medium text-slate-500">
           Customer Name
         </p>
-        <p className="mt-1 break-words text-sm font-semibold text-slate-800">
-          {transaction.customer_name || 'N/A'}
+                <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+          {highlightText(transaction.customer_name, highlightQuery) || 'N/A'}
         </p>
       </div>
 
@@ -1393,8 +1479,8 @@ export default function Transactions() {
         Plate Number
       </span>
 
-      <span className="min-w-0 break-words text-right text-sm font-semibold text-slate-800">
-        {transaction.plate_number || 'N/A'}
+            <span className="min-w-0 break-words text-right text-sm font-semibold text-slate-800">
+        {highlightText(transaction.plate_number, highlightQuery) || 'N/A'}
       </span>
     </div>
 
@@ -1786,11 +1872,11 @@ export default function Transactions() {
                             </p>
 
                             <p className="mt-1.5 break-words text-xs font-bold leading-5 text-blue-700">
-                              {appointment.id
-                                ? `APPT-${String(appointment.id).padStart(
-                                    6,
-                                    '0'
-                                  )}`
+                                                           {appointment.id
+                                ? highlightText(
+                                    `APPT-${String(appointment.id).padStart(6, '0')}`,
+                                    highlightQuery
+                                  )
                                 : 'N/A'}
                             </p>
                           </div>

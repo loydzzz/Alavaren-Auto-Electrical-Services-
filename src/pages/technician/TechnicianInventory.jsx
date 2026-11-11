@@ -15,6 +15,32 @@ import {
 
 const MAX_STOCK = 100
 
+// Highlights the part of the text that matches the search
+function HighlightText({ text, query }) {
+  const value = text ?? ''
+  const q = query?.trim()
+
+  if (!q) return <>{value}</>
+
+  // escape special characters so searching "(" or "." doesn't break
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = value.split(new RegExp(`(${safe})`, 'gi'))
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === q.toLowerCase() ? (
+          <mark key={i} className="rounded bg-yellow-300 px-0.5 text-gray-900">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  )
+}
+
 // Photo thumbnail: shows the whole photo, with a hover "View" overlay
 function ItemThumb({ item, onView }) {
   const overlay = (
@@ -63,6 +89,7 @@ export default function TechnicianInventory() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [viewItem, setViewItem] = useState(null)
   const [viewImage, setViewImage] = useState(null)
+  const [searchHighlightId, setSearchHighlightId] = useState(null)
 
   useEffect(() => {
     fetchItems()
@@ -146,6 +173,49 @@ export default function TechnicianInventory() {
 
     return matchesSearch && matchesStatus
   })
+
+  // When searching: highlight + scroll to the first matching card
+useEffect(() => {
+  const q = search.trim()
+
+  if (!q) {
+    setSearchHighlightId(null)
+    return
+  }
+
+  let clearTimer
+
+  // wait until the user stops typing
+  const timer = setTimeout(() => {
+    const query = q.toLowerCase()
+
+    // best match first: exact name, then starts with, then contains
+    const firstMatch =
+      filteredItems.find((i) => i.name?.toLowerCase() === query) ||
+      filteredItems.find((i) => i.name?.toLowerCase().startsWith(query)) ||
+      filteredItems.find((i) => i.name?.toLowerCase().includes(query)) ||
+      filteredItems[0]
+
+    if (!firstMatch) {
+      setSearchHighlightId(null)
+      return
+    }
+
+    setSearchHighlightId(firstMatch.id)
+
+    // remove the card highlight after 4 seconds
+    clearTimer = setTimeout(() => setSearchHighlightId(null), 4000)
+
+    document
+      .getElementById(`inventory-item-${firstMatch.id}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, 400)
+
+  return () => {
+    clearTimeout(timer)
+    clearTimeout(clearTimer)
+  }
+}, [search, statusFilter])
 
   const lowStockItems = items.filter(
     item =>
@@ -643,15 +713,18 @@ export default function TechnicianInventory() {
 
                 return (
                   <div
-                    key={item.id}
-                    className={`p-4 transition-colors duration-200 hover:bg-gray-50/80 sm:p-5 ${
-                      item.quantity === 0
-                        ? 'bg-red-50/30'
-                        : item.quantity <= item.low_stock_threshold
-                        ? 'bg-yellow-50/30'
-                        : 'bg-white'
-                    }`}
-                  >
+  key={item.id}
+  id={`inventory-item-${item.id}`}
+  className={`p-4 transition-colors duration-200 hover:bg-gray-50/80 sm:p-5 ${
+    searchHighlightId === item.id
+      ? 'bg-red-50 ring-4 ring-inset ring-red-400'
+      : item.quantity === 0
+      ? 'bg-red-50/30'
+      : item.quantity <= item.low_stock_threshold
+      ? 'bg-yellow-50/30'
+      : 'bg-white'
+  }`}
+>
 
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-8">
 
@@ -669,8 +742,8 @@ export default function TechnicianInventory() {
                           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 
                             <h4 className="break-words font-bold text-gray-950">
-                              {item.name}
-                            </h4>
+  <HighlightText text={item.name} query={search} />
+</h4>
 
                             <span
                               className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold sm:text-xs ${status.color}`}
@@ -683,7 +756,7 @@ export default function TechnicianInventory() {
 
                           {item.category && (
   <span className="inline-flex mt-1 bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[11px] font-semibold">
-    {item.category}
+    <HighlightText text={item.category} query={search} />
   </span>
 )}
 
