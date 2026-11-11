@@ -1,0 +1,267 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+const eventDetails = {
+  approved: {
+    status: "confirmed",
+    allowedRoles: ["admin"],
+    message: "Your appointment has been approved.",
+  },
+  rejected: {
+    status: "rejected",
+    allowedRoles: ["admin"],
+    message: "Your appointment request has been rejected.",
+  },
+  service_started: {
+    status: "in_progress",
+    allowedRoles: ["admin", "technician"],
+    message: "Your vehicle service has started.",
+  },
+  service_completed: {
+    status: "completed",
+    allowedRoles: ["admin", "technician"],
+    message: "Your vehicle service has been completed.",
+  },
+  cancelled: {
+    status: "cancelled",
+    allowedRoles: ["admin", "technician"],
+    message: "Your appointment has been cancelled.",
+  },
+} as const;
+
+type SmsEvent = keyof typeof eventDetails;
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function normalizePhilippineNumber(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+
+  if (/^63\d{10}$/.test(digits)) return digits;
+  if (/^09\d{9}$/.test(digits)) return `63${digits.slice(1)}`;
+  if (/^9\d{9}$/.test(digits)) return `63${digits}`;
+
+  return null;
+}
+
+function formatAppointmentId(id: string | number) {
+  return `APPT-${String(id).padStart(6, "0")}`;
+}
+
+Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed." }, 405);
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const semaphoreApiKey = Deno.env.get("SEMAPHORE_API_KEY");
+
+  if (!supabaseUrl || !anonKey || !serviceRoleKey || !semaphoreApiKey) {
+    console.error("SMS function is missing required server configuration.");
+    return jsonResponse({ error: "SMS service is not configured." }, 503);
+  }
+
+  const authorization = request.headers.get("Authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return jsonResponse({ error: "Authentication required." }, 401);
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authorization } },
+  });
+  const { data: userData, error: authError } =
+    await userClient.auth.getUser();
+
+  if (authError || !userData.user) {
+    return jsonResponse({ error: "Authentication required." }, 401);
+  }
+
+  let payload: { appointmentId?: string | number; event?: SmsEvent };
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid request body." }, 400);
+  }
+
+  const appointmentId = payload.appointmentId;
+  const event = payload.event;
+  if (
+    (typeof appointmentId !== "string" && typeof appointmentId !== "number") ||
+    !event ||
+    !Object.hasOwn(eventDetails, event)
+  ) {
+    return jsonResponse({ error: "Invalid appointment or SMS event." }, 400);
+  }
+
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: caller, error: callerError } = await adminClient
+    .from("users")
+    .select("id, role")
+    .eq("id", userData.user.id)
+    .maybeSingle();
+
+  if (callerError || !caller) {
+    return jsonResponse({ error: "User profile not found." }, 403);
+  }
+
+  const { data: appointment, error: appointmentError } = await adminClient
+    .from("appointments")
+    .select("*")
+    .eq("id", appointmentId)
+    .maybeSingle();
+
+  if (appointmentError || !appointment) {
+    return jsonResponse({ error: "Appointment not found." }, 404);
+  }
+
+  const isCustomerCancellation =
+    event === "cancelled" &&
+    caller.role === "customer" &&
+    String(appointment.customer_id) === String(caller.id);
+  const details = eventDetails[event];
+
+  if (
+    !details.allowedRoles.includes(caller.role) &&
+    !isCustomerCancellation
+  ) {
+    return jsonResponse({ error: "Not allowed to send this notification." }, 403);
+  }
+
+  const statusMatches =
+    appointment.status === details.status ||
+    (event === "rejected" &&
+      appointment.status === "cancelled" &&
+      Boolean(appointment.rejected_at));
+
+  if (!statusMatches) {
+    return jsonResponse({ error: "Appointment status does not match the SMS event." }, 409);
+  }
+
+  const customerRecipients = new Set<string>();
+  const appointmentPhone = normalizePhilippineNumber(
+    appointment.mobile_number || appointment.phone
+  );
+
+  if (appointmentPhone) customerRecipients.add(appointmentPhone);
+
+  if (appointment.customer_id) {
+    const { data: customer } = await adminClient
+      .from("users")
+      .select("phone")
+      .eq("id", appointment.customer_id)
+      .maybeSingle();
+    const customerPhone = normalizePhilippineNumber(customer?.phone);
+    if (customerPhone) customerRecipients.add(customerPhone);
+  }
+
+  if (appointment.customer_id && customerRecipients.size === 0) {
+    return jsonResponse({ error: "Customer phone number is missing or invalid." }, 422);
+  }
+
+  const { data: admins, error: adminsError } = await adminClient
+    .from("users")
+    .select("phone")
+    .eq("role", "admin");
+
+  if (adminsError) {
+    console.error("Could not load admin SMS recipients:", adminsError.message);
+    return jsonResponse({ error: "Could not load admin SMS recipients." }, 500);
+  }
+
+  const adminRecipients = new Set<string>();
+  for (const admin of admins ?? []) {
+    const adminPhone = normalizePhilippineNumber(admin.phone);
+    if (adminPhone) adminRecipients.add(adminPhone);
+  }
+
+  if (adminRecipients.size === 0) {
+    return jsonResponse({ error: "No valid admin phone numbers are configured." }, 422);
+  }
+
+  const recipients = new Set([
+    ...customerRecipients,
+    ...adminRecipients,
+  ]);
+
+  const appointmentNumber = formatAppointmentId(appointment.id);
+  const serviceName = String(appointment.service_type || "vehicle service");
+  const message =
+    `Alavaren ${appointmentNumber}: ${details.message} ` +
+    `Service: ${serviceName}.`;
+  const form = new URLSearchParams({
+    apikey: semaphoreApiKey,
+    number: [...recipients].join(","),
+    message,
+  });
+  const senderName = Deno.env.get("SEMAPHORE_SENDER_NAME");
+  if (senderName) form.set("sendername", senderName);
+
+  let providerResponse: Response;
+  try {
+    providerResponse = await fetch(
+      "https://api.semaphore.co/api/v4/messages",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: form,
+      }
+    );
+  } catch (error) {
+    console.error("Semaphore request failed:", error);
+    return jsonResponse({ error: "SMS provider could not be reached." }, 502);
+  }
+
+  if (!providerResponse.ok) {
+    console.error(
+      "Semaphore rejected SMS request with status:",
+      providerResponse.status
+    );
+    return jsonResponse({ error: "SMS provider rejected the request." }, 502);
+  }
+
+  let providerMessages: unknown;
+  try {
+    providerMessages = await providerResponse.json();
+  } catch {
+    return jsonResponse({ error: "SMS provider returned an invalid response." }, 502);
+  }
+
+  if (
+    !Array.isArray(providerMessages) ||
+    providerMessages.length === 0 ||
+    providerMessages.some((message) =>
+      ["failed", "error"].includes(
+        String(message?.status ?? "").toLowerCase()
+      )
+    )
+  ) {
+    return jsonResponse({ error: "SMS provider did not accept the messages." }, 502);
+  }
+
+  return jsonResponse({ ok: true, recipientCount: recipients.size });
+});

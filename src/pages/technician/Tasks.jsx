@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useNavigate, useLocation } from 'react-router-dom'
 import toast, { Toaster } from 'react-hot-toast'
 import AnnouncementBanner from '../../components/AnnouncementBanner'
+import { sendAppointmentStatusSms } from '../../lib/appointmentSms'
 
 
 import {
@@ -1743,6 +1744,16 @@ const qty = Number(serviceItemQuantity)
         return
       }
 
+      const smsSent = await sendAppointmentStatusSms(
+        id,
+        'service_completed'
+      )
+      if (!smsSent) {
+        toast.error(
+          'Service completed, but SMS notifications could not be sent.'
+        )
+      }
+
       await addProgressHistory(
         id,
         'completed',
@@ -1864,6 +1875,22 @@ const qty = Number(serviceItemQuantity)
       )
 
       return
+    }
+
+    const smsEvent =
+      status === 'in_progress'
+        ? 'service_started'
+        : status === 'cancelled'
+          ? 'cancelled'
+          : null
+
+    if (smsEvent) {
+      const smsSent = await sendAppointmentStatusSms(id, smsEvent)
+      if (!smsSent) {
+        toast.error(
+          'Status updated, but SMS notifications could not be sent.'
+        )
+      }
     }
 
     // =========================================================

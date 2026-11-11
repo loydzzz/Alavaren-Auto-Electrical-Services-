@@ -7,6 +7,7 @@ import { FaCommentDots } from "react-icons/fa"
 import React from "react"
 import AnnouncementBanner from '../../components/AnnouncementBanner'
 import toast from "react-hot-toast"
+import { sendAppointmentStatusSms } from '../../lib/appointmentSms'
 
 
 import {
@@ -1421,6 +1422,28 @@ if (status === "cancelled") {
   }
 
   const appointment = data[0]
+
+  const smsEvent =
+    cancellationType === "rejected" || status === "rejected"
+      ? "rejected"
+      : status === "confirmed"
+        ? "approved"
+        : status === "in_progress"
+          ? "service_started"
+          : status === "completed"
+            ? "service_completed"
+            : status === "cancelled"
+              ? "cancelled"
+              : null
+
+  if (smsEvent) {
+    const smsSent = await sendAppointmentStatusSms(id, smsEvent)
+    if (!smsSent) {
+      toast.error(
+        "Status updated, but SMS notifications could not be sent."
+      )
+    }
+  }
   
 
 
