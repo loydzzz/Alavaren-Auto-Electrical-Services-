@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import React, { useEffect, useRef, useState } from 'react'
-import SpecializedCarousel from './SpecializedCarousel'
+import SpecializedCarousel from './Specializedcarousel'
 
 import { FaFacebookF } from 'react-icons/fa'
 import { FaTiktok } from 'react-icons/fa6'
