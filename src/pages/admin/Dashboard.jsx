@@ -6783,6 +6783,17 @@ const handleApproveAppointment = async (appointmentId) => {
       return
     }
 
+    const smsSent = await sendAppointmentStatusSms(
+      appointmentId,
+      "approved"
+    )
+
+    if (!smsSent) {
+      toast.error(
+        "Appointment approved, but UNI SMS did not accept the customer message."
+      )
+    }
+
     console.log(
       "Appointment approved:",
       data
