@@ -341,11 +341,6 @@ export default function Login() {
       return
     }
 
-    toast.success(
-      `${role.charAt(0).toUpperCase() + role.slice(1)} logged in successfully!`,
-      { duration: 3000 }
-    )
-
     if (role === 'admin') {
       navigate('/admin')
     } else if (role === 'technician') {
