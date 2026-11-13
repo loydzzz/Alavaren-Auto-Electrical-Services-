@@ -32,7 +32,7 @@ const PROFILE_EDIT_COOLDOWN_DAYS = 60
 
 // ---------- OTP ----------
 // Must match the OTP length set in Supabase Auth.
-const OTP_LENGTH = 8
+const OTP_LENGTH = 6
 // Seconds the customer must wait before requesting another code
 const RESEND_SECONDS = 90
 // Wrong attempts allowed before the customer must request a new code
