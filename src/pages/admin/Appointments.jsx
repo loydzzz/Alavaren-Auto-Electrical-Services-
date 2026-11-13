@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
+import { sendAppointmentStatusSms } from '../../lib/appointmentSms'
+import toast from 'react-hot-toast'
 import {
   useLocation,
   useNavigate,
@@ -43,6 +45,7 @@ export default function Appointments() {
 
   const [appointments, setAppointments] = useState([])
   const [loading, setLoading] = useState(true)
+  const [confirmingAppointmentId, setConfirmingAppointmentId] = useState(null)
 
   const navigate = useNavigate()
   const location = useLocation()
@@ -378,6 +381,67 @@ setAppointments(appointmentsWithNames)
 
 
 
+
+  async function confirmAppointment(appointment) {
+    if (confirmingAppointmentId === appointment.id) return
+
+    setConfirmingAppointmentId(appointment.id)
+
+    try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser()
+
+      if (authError || !user) {
+        toast.error('Unable to verify the admin account.')
+        return
+      }
+
+      const { data: updatedAppointment, error: updateError } = await supabase
+        .from('appointments')
+        .update({
+          status: 'confirmed',
+          approved_by: user.id,
+        })
+        .eq('id', appointment.id)
+        .eq('status', 'pending')
+        .select('id')
+        .maybeSingle()
+
+      if (updateError) {
+        console.error('Appointment confirmation failed:', updateError)
+        toast.error('Could not confirm this booking.')
+        return
+      }
+
+      if (!updatedAppointment) {
+        toast.error('This booking is no longer pending. Refreshing the list.')
+        await fetchAppointments()
+        return
+      }
+
+      const smsSent = await sendAppointmentStatusSms(
+        appointment.id,
+        'approved'
+      )
+
+      if (smsSent) {
+        toast.success('Booking confirmed and SMS accepted by UNI SMS.')
+      } else {
+        toast.error(
+          'Booking confirmed, but UNI SMS did not accept the customer message.'
+        )
+      }
+
+      await fetchAppointments()
+    } catch (error) {
+      console.error('Appointment confirmation error:', error)
+      toast.error('Could not confirm this booking.')
+    } finally {
+      setConfirmingAppointmentId(null)
+    }
+  }
 
   function statusStyle(status) {
 
@@ -949,6 +1013,10 @@ setAppointments(appointmentsWithNames)
                         Status
                       </th>
 
+                      <th className="whitespace-nowrap px-5 py-4 text-left text-[11px] font-extrabold uppercase tracking-wider text-gray-500">
+                        Action
+                      </th>
+
                     </tr>
 
                   </thead>
@@ -1396,6 +1464,22 @@ setAppointments(appointmentsWithNames)
 
 </td>
 
+<td className="px-5 py-4">
+  {appt.status === 'pending' ? (
+    <button
+      type="button"
+      onClick={() => confirmAppointment(appt)}
+      disabled={confirmingAppointmentId === appt.id}
+      className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <FaCheckCircle />
+      {confirmingAppointmentId === appt.id ? 'Confirming...' : 'Confirm booking'}
+    </button>
+  ) : (
+    <span className="text-xs text-gray-400">—</span>
+  )}
+</td>
+
 
                       </tr>
 
@@ -1589,6 +1673,18 @@ setAppointments(appointmentsWithNames)
 </div>
 
 
+
+                    {appt.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => confirmAppointment(appt)}
+                        disabled={confirmingAppointmentId === appt.id}
+                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <FaCheckCircle />
+                        {confirmingAppointmentId === appt.id ? 'Confirming...' : 'Confirm booking'}
+                      </button>
+                    )}
 
                     {/* SERVICE */}
 
