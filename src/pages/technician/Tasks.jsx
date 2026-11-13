@@ -133,6 +133,18 @@ const [userPresence, setUserPresence] = useState({})
 
   const [updatingTaskId, setUpdatingTaskId] = useState(null)
 
+  const handleConfirmAppointment = async (taskId) => {
+    if (updatingTaskId === taskId) return
+
+    setUpdatingTaskId(taskId)
+
+    try {
+      await updateStatus(taskId, 'confirmed')
+    } finally {
+      setUpdatingTaskId(null)
+    }
+  }
+
   const handleStartService = async (taskId) => {
     if (updatingTaskId === taskId) return
 
@@ -1009,7 +1021,7 @@ useEffect(() => {
           )
         `)
         .eq('technician_id', user.id)
-        .in('status', ['confirmed', 'in_progress'])
+        .in('status', ['pending', 'confirmed', 'in_progress'])
         .order('appointment_date', { ascending: true })
 
       if (error) {
@@ -1878,7 +1890,9 @@ const qty = Number(serviceItemQuantity)
     }
 
     const smsEvent =
-      status === 'in_progress'
+      status === 'confirmed'
+        ? 'approved'
+        : status === 'in_progress'
         ? 'service_started'
         : status === 'cancelled'
           ? 'cancelled'
@@ -5743,6 +5757,27 @@ const formatLongDate = (value) => {
                       ================================================= */}
 
                       <div className="mt-5 flex flex-col gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+
+                        {task.status === 'pending' && (
+                          <button
+                            type="button"
+                            disabled={updatingTaskId === task.id}
+                            onClick={() => handleConfirmAppointment(task.id)}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                          >
+                            {updatingTaskId === task.id ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Confirming...
+                              </>
+                            ) : (
+                              <>
+                                <CircleCheck className="h-4 w-4" />
+                                Confirm Booking
+                              </>
+                            )}
+                          </button>
+                        )}
 
                         {task.status === 'confirmed' && (
                           <button

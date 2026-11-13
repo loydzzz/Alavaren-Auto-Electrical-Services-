@@ -11,7 +11,7 @@ const corsHeaders = {
 const eventDetails = {
   approved: {
     status: "confirmed",
-    allowedRoles: ["admin"],
+    allowedRoles: ["admin", "technician"],
     message: "Your appointment has been approved.",
   },
   rejected: {
@@ -148,10 +148,14 @@ Deno.serve(async (request) => {
     event === "cancelled" &&
     caller.role === "customer" &&
     String(appointment.customer_id) === String(caller.id);
+  const isAssignedTechnician =
+    caller.role === "technician" &&
+    String(appointment.technician_id) === String(caller.id);
   const details = eventDetails[event];
 
   if (
-    !details.allowedRoles.includes(caller.role) &&
+    (!details.allowedRoles.includes(caller.role) ||
+      (caller.role === "technician" && !isAssignedTechnician)) &&
     !isCustomerCancellation
   ) {
     return jsonResponse({ error: "Not allowed to send this notification." }, 403);
