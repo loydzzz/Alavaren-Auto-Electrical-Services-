@@ -167,24 +167,24 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: "Appointment status does not match the SMS event." }, 409);
   }
 
-  const customerRecipients = new Set<string>();
-  const appointmentPhone = normalizePhilippineNumber(
+  let customerPhone = normalizePhilippineNumber(
     appointment.mobile_number || appointment.phone
   );
 
-  if (appointmentPhone) customerRecipients.add(appointmentPhone);
-
-  if (appointment.customer_id) {
-    const { data: customer } = await adminClient
+  if (!customerPhone && appointment.customer_id) {
+    const { data: customer, error: customerError } = await adminClient
       .from("users")
       .select("phone")
       .eq("id", appointment.customer_id)
       .maybeSingle();
-    const customerPhone = normalizePhilippineNumber(customer?.phone);
-    if (customerPhone) customerRecipients.add(customerPhone);
+
+    if (customerError) {
+      console.error("Could not load customer SMS number:", customerError.message);
+    }
+    customerPhone = normalizePhilippineNumber(customer?.phone);
   }
 
-  if (appointment.customer_id && customerRecipients.size === 0) {
+  if (!customerPhone) {
     return jsonResponse({ error: "Customer phone number is missing or invalid." }, 422);
   }
 
@@ -195,7 +195,6 @@ Deno.serve(async (request) => {
 
   if (adminsError) {
     console.error("Could not load admin SMS recipients:", adminsError.message);
-    return jsonResponse({ error: "Could not load admin SMS recipients." }, 500);
   }
 
   const adminRecipients = new Set<string>();
@@ -204,20 +203,34 @@ Deno.serve(async (request) => {
     if (adminPhone) adminRecipients.add(adminPhone);
   }
 
-  if (adminRecipients.size === 0) {
-    return jsonResponse({ error: "No valid admin phone numbers are configured." }, 422);
-  }
-
   const recipients = new Set([
-    ...customerRecipients,
+    customerPhone,
     ...adminRecipients,
   ]);
 
   const appointmentNumber = formatAppointmentId(appointment.id);
   const serviceName = String(appointment.service_type || "vehicle service");
-  const message =
-    `Alavaren ${appointmentNumber}: ${details.message} ` +
-    `Service: ${serviceName}.`;
+  const vehicle = [appointment.vehicle_model, appointment.plate_number]
+    .filter(Boolean)
+    .join(" / ");
+  const schedule = [appointment.appointment_date, appointment.appointment_time]
+    .filter(Boolean)
+    .join(" ");
+  const updateReason = String(
+    event === "rejected"
+      ? appointment.rejection_reason || ""
+      : event === "cancelled"
+        ? appointment.cancellation_reason || ""
+        : ""
+  ).trim();
+  const message = [
+    appointment.customer_name ? `Hi ${appointment.customer_name},` : "",
+    `Alavaren ${appointmentNumber}: ${details.message}`,
+    `Service: ${serviceName}.`,
+    vehicle ? `Vehicle: ${vehicle}.` : "",
+    schedule ? `Schedule: ${schedule}.` : "",
+    updateReason ? `Reason: ${updateReason}.` : "",
+  ].filter(Boolean).join(" ").slice(0, 670);
   const credentials = btoa(`${uniSmsApiKey}:`);
   const providerResults = await Promise.all(
     [...recipients].map(async (recipient) => {
@@ -242,33 +255,46 @@ Deno.serve(async (request) => {
         const referenceId = payload?.message?.reference_id;
 
         return {
+          recipient,
           accepted: response.ok && Boolean(referenceId),
           referenceId: referenceId || null,
           status: response.status,
         };
       } catch {
-        return { accepted: false, referenceId: null, status: 0 };
+        return { recipient, accepted: false, referenceId: null, status: 0 };
       }
     })
   );
 
   const acceptedMessages = providerResults.filter((result) => result.accepted);
-  if (acceptedMessages.length !== providerResults.length) {
+  const customerMessage = providerResults.find(
+    (result) => result.recipient === customerPhone
+  );
+
+  if (!customerMessage?.accepted) {
     console.error("UniSMS did not accept all appointment notifications:", {
       acceptedCount: acceptedMessages.length,
       recipientCount: providerResults.length,
       responseStatuses: providerResults.map((result) => result.status),
     });
     return jsonResponse({
-      error: "UniSMS did not accept all appointment notifications.",
+      error: "UniSMS did not accept the customer notification.",
       acceptedCount: acceptedMessages.length,
       recipientCount: providerResults.length,
     }, 502);
   }
 
+  if (acceptedMessages.length !== providerResults.length) {
+    console.error("UniSMS did not accept all admin notifications:", {
+      acceptedCount: acceptedMessages.length,
+      recipientCount: providerResults.length,
+      responseStatuses: providerResults.map((result) => result.status),
+    });
+  }
+
   return jsonResponse({
     ok: true,
     recipientCount: acceptedMessages.length,
-    referenceIds: acceptedMessages.map((result) => result.referenceId),
+    customerReferenceId: customerMessage.referenceId,
   });
 });
