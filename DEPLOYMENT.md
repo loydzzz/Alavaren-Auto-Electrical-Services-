@@ -31,11 +31,11 @@ Call Roboflow and SMS providers from an authenticated Supabase Edge Function or 
 
 ### Appointment SMS notifications
 
-The `send-appointment-sms` Supabase Edge Function sends Semaphore alerts after appointment approval, rejection, service start, service completion, and cancellation. It sends to the customer's appointment/profile phone and to admin users with a phone number in `users.phone`. Philippine phone numbers must be saved in `09...`, `9...`, or `+63...` format.
+The `send-appointment-sms` Supabase Edge Function sends UNI SMS alerts after appointment approval, rejection, service start, service completion, and cancellation. It sends to the customer's appointment/profile phone and to admin users with a phone number in `users.phone`. Philippine phone numbers must be saved in `09...`, `9...`, or `+63...` format.
 
-Deploy the function to the linked Supabase project with `supabase functions deploy send-appointment-sms`. In Supabase **Project Settings > Edge Functions > Secrets**, set `SEMAPHORE_API_KEY`; optionally set `SEMAPHORE_SENDER_NAME` to an active Semaphore sender name. The standard Supabase function secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` must also be available. Never put the Semaphore key or service-role key in the frontend or Railway build variables.
+Deploy the function to the linked Supabase project with `supabase functions deploy send-appointment-sms`. In Supabase **Project Settings > Edge Functions > Secrets**, set `UNISMS_API_KEY` and `UNISMS_SENDER_ID` to your UNI SMS API secret and active sender ID. The standard Supabase function secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` must also be available. Never put the UNI SMS key or service-role key in the frontend or Railway build variables.
 
-The function validates the caller, role, and persisted appointment status before sending. Test each event with a real appointment, then review the Supabase function logs and Semaphore message history. Delivery requires a funded Semaphore account and valid phone numbers for the customer and at least one admin.
+The function validates the caller, role, and persisted appointment status before sending. Test each event with a real appointment, then review Supabase function logs and UNI SMS message history. Delivery requires sufficient UNI SMS credits, an active sender ID, and valid phone numbers for recipients. A default sender ID may not reach every carrier; use an approved sender ID for full network coverage.
 
 ## Local checks
 

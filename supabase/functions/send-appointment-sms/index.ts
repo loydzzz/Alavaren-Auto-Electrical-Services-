@@ -51,9 +51,9 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
 function normalizePhilippineNumber(value: unknown) {
   const digits = String(value ?? "").replace(/\D/g, "");
 
-  if (/^63\d{10}$/.test(digits)) return digits;
-  if (/^09\d{9}$/.test(digits)) return `63${digits.slice(1)}`;
-  if (/^9\d{9}$/.test(digits)) return `63${digits}`;
+  if (/^639\d{9}$/.test(digits)) return `+${digits}`;
+  if (/^09\d{9}$/.test(digits)) return `+63${digits.slice(1)}`;
+  if (/^9\d{9}$/.test(digits)) return `+63${digits}`;
 
   return null;
 }
@@ -74,9 +74,16 @@ Deno.serve(async (request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const semaphoreApiKey = Deno.env.get("SEMAPHORE_API_KEY");
+  const uniSmsApiKey = Deno.env.get("UNISMS_API_KEY");
+  const uniSmsSenderId = Deno.env.get("UNISMS_SENDER_ID");
 
-  if (!supabaseUrl || !anonKey || !serviceRoleKey || !semaphoreApiKey) {
+  if (
+    !supabaseUrl ||
+    !anonKey ||
+    !serviceRoleKey ||
+    !uniSmsApiKey ||
+    !uniSmsSenderId
+  ) {
     console.error("SMS function is missing required server configuration.");
     return jsonResponse({ error: "SMS service is not configured." }, 503);
   }
@@ -211,57 +218,57 @@ Deno.serve(async (request) => {
   const message =
     `Alavaren ${appointmentNumber}: ${details.message} ` +
     `Service: ${serviceName}.`;
-  const form = new URLSearchParams({
-    apikey: semaphoreApiKey,
-    number: [...recipients].join(","),
-    message,
-  });
-  const senderName = Deno.env.get("SEMAPHORE_SENDER_NAME");
-  if (senderName) form.set("sendername", senderName);
+  const credentials = btoa(`${uniSmsApiKey}:`);
+  const providerResults = await Promise.all(
+    [...recipients].map(async (recipient) => {
+      try {
+        const response = await fetch("https://unismsapi.com/api/sms", {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${credentials}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            recipient,
+            content: message,
+            sender_id: uniSmsSenderId,
+            metadata: {
+              appointment_id: String(appointment.id),
+              event,
+            },
+          }),
+        });
+        const payload = await response.json().catch(() => null);
+        const referenceId = payload?.message?.reference_id;
 
-  let providerResponse: Response;
-  try {
-    providerResponse = await fetch(
-      "https://api.semaphore.co/api/v4/messages",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: form,
+        return {
+          accepted: response.ok && Boolean(referenceId),
+          referenceId: referenceId || null,
+          status: response.status,
+        };
+      } catch {
+        return { accepted: false, referenceId: null, status: 0 };
       }
-    );
-  } catch (error) {
-    console.error("Semaphore request failed:", error);
-    return jsonResponse({ error: "SMS provider could not be reached." }, 502);
+    })
+  );
+
+  const acceptedMessages = providerResults.filter((result) => result.accepted);
+  if (acceptedMessages.length !== providerResults.length) {
+    console.error("UniSMS did not accept all appointment notifications:", {
+      acceptedCount: acceptedMessages.length,
+      recipientCount: providerResults.length,
+      responseStatuses: providerResults.map((result) => result.status),
+    });
+    return jsonResponse({
+      error: "UniSMS did not accept all appointment notifications.",
+      acceptedCount: acceptedMessages.length,
+      recipientCount: providerResults.length,
+    }, 502);
   }
 
-  if (!providerResponse.ok) {
-    console.error(
-      "Semaphore rejected SMS request with status:",
-      providerResponse.status
-    );
-    return jsonResponse({ error: "SMS provider rejected the request." }, 502);
-  }
-
-  let providerMessages: unknown;
-  try {
-    providerMessages = await providerResponse.json();
-  } catch {
-    return jsonResponse({ error: "SMS provider returned an invalid response." }, 502);
-  }
-
-  if (
-    !Array.isArray(providerMessages) ||
-    providerMessages.length === 0 ||
-    providerMessages.some((message) =>
-      ["failed", "error"].includes(
-        String(message?.status ?? "").toLowerCase()
-      )
-    )
-  ) {
-    return jsonResponse({ error: "SMS provider did not accept the messages." }, 502);
-  }
-
-  return jsonResponse({ ok: true, recipientCount: recipients.size });
+  return jsonResponse({
+    ok: true,
+    recipientCount: acceptedMessages.length,
+    referenceIds: acceptedMessages.map((result) => result.referenceId),
+  });
 });
